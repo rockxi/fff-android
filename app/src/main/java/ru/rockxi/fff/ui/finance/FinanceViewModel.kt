@@ -9,7 +9,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import ru.rockxi.fff.data.finance.AccountEntity
 import ru.rockxi.fff.data.finance.CategoryEntity
 import ru.rockxi.fff.data.finance.CategoryKind
@@ -17,6 +21,9 @@ import ru.rockxi.fff.data.finance.EntryKind
 import ru.rockxi.fff.data.finance.FinanceRepository
 import ru.rockxi.fff.data.finance.FinanceTotals
 import ru.rockxi.fff.data.finance.LedgerEntryEntity
+import ru.rockxi.fff.data.finance.BudgetEntity
+import ru.rockxi.fff.data.finance.BudgetStatus
+import java.time.YearMonth
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -25,8 +32,12 @@ internal interface FinanceStore {
     suspend fun categories(kind: CategoryKind, includeArchived: Boolean = false): List<CategoryEntity>
     suspend fun entries(): List<LedgerEntryEntity>
     suspend fun totals(): FinanceTotals
+    suspend fun budgets(): List<BudgetEntity>
+    suspend fun budgetStatus(budgetId: Long, month: YearMonth): BudgetStatus
+    suspend fun createBudget(name: String, currency: String): Long
+    suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long)
     suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long
-    suspend fun createCategory(name: String, kind: CategoryKind): Long
+    suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long): Long
     suspend fun archiveAccount(id: Long)
     suspend fun archiveCategory(id: Long)
     suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long
@@ -39,8 +50,12 @@ internal class RepositoryFinanceStore(private val repository: FinanceRepository)
     override suspend fun categories(kind: CategoryKind, includeArchived: Boolean) = repository.categories(kind, includeArchived)
     override suspend fun entries() = repository.entries()
     override suspend fun totals() = repository.totals()
+    override suspend fun budgets() = repository.budgets()
+    override suspend fun budgetStatus(budgetId: Long, month: YearMonth) = repository.budgetStatus(budgetId, month)
+    override suspend fun createBudget(name: String, currency: String) = repository.createBudget(name, currency)
+    override suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long) = repository.allocate(budgetId, month, amountMinor)
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long) = repository.createAccount(name, currency, initialBalanceMinor)
-    override suspend fun createCategory(name: String, kind: CategoryKind) = repository.createCategory(name, kind)
+    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long) = repository.createCategory(name, kind, budgetId)
     override suspend fun archiveAccount(id: Long) = repository.archiveAccount(id)
     override suspend fun archiveCategory(id: Long) = repository.archiveCategory(id)
     override suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String) = repository.addIncome(accountId, categoryId, amountMinor, note)
@@ -58,6 +73,9 @@ internal data class FinanceUiState(
     val entries: List<LedgerEntryEntity> = emptyList(),
     val totals: FinanceTotals = FinanceTotals(0, 0),
     val currencySummaries: List<CurrencySummary> = emptyList(),
+    val budgets: List<BudgetEntity> = emptyList(),
+    val budgetStatuses: List<BudgetStatus> = emptyList(),
+    val selectedMonth: YearMonth = YearMonth.now(),
     val error: String? = null,
 )
 
@@ -76,17 +94,28 @@ internal data class OperationFormState(
     val categoryId: Long? = null,
     val targetAccountId: Long? = null,
 ) {
-    fun selectSource(id: Long?): OperationFormState = copy(accountId = id, targetAccountId = null)
+    fun selectSource(id: Long?, state: FinanceUiState? = null): OperationFormState {
+        val selectedCategory = if (state == null || kind != EntryKind.EXPENSE || categoryId in expenseCategoriesFor(state, id).map { it.id }) categoryId else null
+        return copy(accountId = id, categoryId = selectedCategory, targetAccountId = null)
+    }
     fun selectKind(value: EntryKind): OperationFormState = copy(kind = value, categoryId = null, targetAccountId = null)
     fun transferTargets(accounts: List<AccountEntity>): List<AccountEntity> {
         val source = accounts.firstOrNull { it.id == accountId } ?: return emptyList()
         return accounts.filter { !it.archived && it.id != source.id && it.currency == source.currency }
     }
+    fun categories(state: FinanceUiState): List<CategoryEntity> =
+        if (kind == EntryKind.EXPENSE) expenseCategoriesFor(state, accountId) else state.incomeCategories
+}
+
+internal fun expenseCategoriesFor(state: FinanceUiState, accountId: Long?): List<CategoryEntity> {
+    val currency = state.accounts.firstOrNull { it.id == accountId }?.currency ?: return emptyList()
+    val budgetIds = state.budgets.filter { it.currency == currency }.map { it.id }.toSet()
+    return state.expenseCategories.filter { it.budgetId in budgetIds }
 }
 
 internal fun availableEntryKinds(state: FinanceUiState): Set<EntryKind> = buildSet {
     if (state.accounts.isNotEmpty() && state.incomeCategories.isNotEmpty()) add(EntryKind.INCOME)
-    if (state.accounts.isNotEmpty() && state.expenseCategories.isNotEmpty()) add(EntryKind.EXPENSE)
+    if (state.accounts.any { account -> expenseCategoriesFor(state, account.id).isNotEmpty() }) add(EntryKind.EXPENSE)
     if (state.accounts.groupBy { it.currency }.any { it.value.size >= 2 }) add(EntryKind.TRANSFER)
 }
 
@@ -114,26 +143,58 @@ private fun saturatedAdd(left: Long, right: Long): Long = when {
 internal class FinanceViewModel(
     private val store: FinanceStore,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    initialMonth: YearMonth = YearMonth.now(),
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(FinanceUiState())
+    private val mutableState = MutableStateFlow(FinanceUiState(selectedMonth = initialMonth))
     val state: StateFlow<FinanceUiState> = mutableState.asStateFlow()
+
+    private var loadJob: Job? = null
+    private val loadLock = Any()
+    private var loadGeneration = 0L
 
     init { refresh() }
 
-    fun refresh() = launchAction(clearError = false) { loadState() }
+    fun refresh() {
+        loadJob?.cancel()
+        val (month, generation) = synchronized(loadLock) {
+            mutableState.value.selectedMonth to ++loadGeneration
+        }
+        loadJob = launchAction(clearError = false) { loadState(month, generation) }
+    }
     fun clearError() { mutableState.value = mutableState.value.copy(error = null) }
 
     fun createAccount(name: String, currency: String, opening: String, done: (Boolean) -> Unit = {}) {
         val amount = parseMoney(opening.ifBlank { "0" }) ?: return invalid("Введите корректный начальный баланс", done)
-        launchAction(done = done) { store.createAccount(name, currency, amount); loadState() }
+        launchAction(done = done) { store.createAccount(name, currency, amount); reloadCurrentState() }
     }
 
-    fun createCategory(name: String, kind: CategoryKind, done: (Boolean) -> Unit = {}) = launchAction(done = done) {
-        store.createCategory(name, kind); loadState()
+    fun createCategory(name: String, kind: CategoryKind, budgetId: Long?, done: (Boolean) -> Unit = {}) {
+        if (budgetId == null) return invalid("Выберите бюджет", done)
+        launchAction(done = done) { store.createCategory(name, kind, budgetId); reloadCurrentState() }
     }
 
-    fun archiveAccount(id: Long) = launchAction { store.archiveAccount(id); loadState() }
-    fun archiveCategory(id: Long) = launchAction { store.archiveCategory(id); loadState() }
+    fun createBudget(name: String, currency: String, done: (Boolean) -> Unit = {}) = launchAction(done = done) {
+        store.createBudget(name, currency); reloadCurrentState()
+    }
+
+    fun setAllocation(budgetId: Long?, amount: String, done: (Boolean) -> Unit = {}) {
+        val minor = parseMoney(amount) ?: return invalid("Введите корректную сумму бюджета", done)
+        if (budgetId == null || minor < 0) return invalid("Выберите бюджет и укажите неотрицательную сумму", done)
+        launchAction(done = done) { store.allocate(budgetId, mutableState.value.selectedMonth, minor); reloadCurrentState() }
+    }
+
+    fun changeMonth(delta: Long) {
+        loadJob?.cancel()
+        val (month, generation) = synchronized(loadLock) {
+            val month = mutableState.value.selectedMonth.plusMonths(delta)
+            mutableState.value = mutableState.value.copy(selectedMonth = month)
+            month to ++loadGeneration
+        }
+        loadJob = launchAction(clearError = false) { loadState(month, generation) }
+    }
+
+    fun archiveAccount(id: Long) = launchAction { store.archiveAccount(id); reloadCurrentState() }
+    fun archiveCategory(id: Long) = launchAction { store.archiveCategory(id); reloadCurrentState() }
 
     fun addEntry(kind: EntryKind, amount: String, accountId: Long?, categoryId: Long?, targetId: Long?, note: String, done: (Boolean) -> Unit = {}) {
         val minor = parseMoney(amount) ?: return invalid("Введите положительную сумму, например 1250,50", done)
@@ -146,30 +207,53 @@ internal class FinanceViewModel(
                 EntryKind.EXPENSE -> store.addExpense(accountId, categoryId!!, minor, note)
                 EntryKind.TRANSFER -> store.transfer(accountId, targetId!!, minor, note)
             }
-            loadState()
+            reloadCurrentState()
         }
     }
 
     private fun invalid(message: String, done: (Boolean) -> Unit) { mutableState.value = mutableState.value.copy(error = message); done(false) }
-    private fun launchAction(clearError: Boolean = true, done: (Boolean) -> Unit = {}, block: suspend () -> Unit) {
+    private fun launchAction(clearError: Boolean = true, done: (Boolean) -> Unit = {}, block: suspend () -> Unit): Job {
         if (clearError) mutableState.value = mutableState.value.copy(error = null)
-        viewModelScope.launch {
-            runCatching { withContext(io) { block() } }
-                .onSuccess { done(true) }
-                .onFailure { mutableState.value = mutableState.value.copy(loading = false, error = it.message ?: "Не удалось сохранить данные"); done(false) }
+        return viewModelScope.launch {
+            try {
+                withContext(io) { block() }
+                done(true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.value = mutableState.value.copy(loading = false, error = error.message ?: "Не удалось сохранить данные")
+                done(false)
+            }
         }
     }
-    private suspend fun loadState() {
+    private suspend fun reloadCurrentState() {
+        val (month, generation) = synchronized(loadLock) { mutableState.value.selectedMonth to ++loadGeneration }
+        loadState(month, generation)
+    }
+
+    private suspend fun loadState(month: YearMonth, generation: Long) {
         val accounts = store.accounts()
         val allAccounts = store.accounts(true)
         val entries = store.entries()
-        mutableState.value = FinanceUiState(
+        val budgets = store.budgets()
+        val statuses = budgets.map { store.budgetStatus(it.id, month) }
+        val incomeCategories = store.categories(CategoryKind.INCOME)
+        val expenseCategories = store.categories(CategoryKind.EXPENSE)
+        val allCategories = store.categories(CategoryKind.INCOME, true) + store.categories(CategoryKind.EXPENSE, true)
+        val totals = store.totals()
+        val summaries = currencySummaries(allAccounts, entries)
+        val loaded = FinanceUiState(
             loading = false,
             accounts = accounts, allAccounts = allAccounts,
-            incomeCategories = store.categories(CategoryKind.INCOME), expenseCategories = store.categories(CategoryKind.EXPENSE),
-            allCategories = store.categories(CategoryKind.INCOME, true) + store.categories(CategoryKind.EXPENSE, true),
-            entries = entries, totals = store.totals(), currencySummaries = currencySummaries(allAccounts, entries), error = null,
+            incomeCategories = incomeCategories, expenseCategories = expenseCategories,
+            allCategories = allCategories,
+            entries = entries, totals = totals, currencySummaries = summaries,
+            budgets = budgets, budgetStatuses = statuses, selectedMonth = month, error = null,
         )
+        currentCoroutineContext().ensureActive()
+        synchronized(loadLock) {
+            if (generation == loadGeneration && mutableState.value.selectedMonth == month) mutableState.value = loaded
+        }
     }
 
     companion object {

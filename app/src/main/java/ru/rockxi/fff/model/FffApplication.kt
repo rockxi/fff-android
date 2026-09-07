@@ -17,6 +17,15 @@ enum class AppAccent { Mint, Violet }
 object AppCatalog {
     val applications = listOf(
         FffApplication(
+            id = "harness",
+            name = "AI Harness",
+            kicker = "PAIRED ASSISTANT",
+            description = "Безопасное подключение к тому же ИИ-ассистенту и нативный чат.",
+            meta = "PAIR · CHAT · DEVICE",
+            accent = AppAccent.Mint,
+            destination = Destination.Harness,
+        ),
+        FffApplication(
             id = "control",
             name = "Remote Control",
             kicker = "INFRASTRUCTURE",
@@ -36,4 +45,3 @@ object AppCatalog {
         ),
     )
 }
-

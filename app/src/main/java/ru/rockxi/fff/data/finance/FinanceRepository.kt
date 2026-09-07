@@ -2,6 +2,10 @@ package ru.rockxi.fff.data.finance
 
 import androidx.room.withTransaction
 import java.util.Currency
+import java.time.YearMonth
+import java.time.ZoneId
+
+data class BudgetStatus(val budget: BudgetEntity, val allocatedMinor: Long, val spentMinor: Long, val remainingMinor: Long)
 
 internal class FinanceRepository(private val database: FinanceDatabase) {
     private val dao = database.financeDao()
@@ -18,9 +22,35 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         require(dao.setAccountArchived(id, archived) == 1) { "Account not found" }
     }
 
-    suspend fun createCategory(name: String, kind: CategoryKind): Long {
+    suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long? = null): Long {
         require(name.isNotBlank()) { "Category name is required" }
-        return dao.insertCategory(CategoryEntity(name = name.trim(), kind = kind))
+        val selected = budgetId?.let { dao.budget(it) } ?: dao.budgetByName("Общие")
+        requireNotNull(selected) { "Budget not found" }
+        return dao.insertCategory(CategoryEntity(name = name.trim(), kind = kind, budgetId = selected.id))
+    }
+
+    suspend fun createBudget(name: String, currency: String): Long {
+        require(name.isNotBlank()) { "Budget name is required" }
+        val normalized = currency.trim().uppercase()
+        require(runCatching { Currency.getInstance(normalized) }.isSuccess) { "Invalid currency" }
+        return dao.insertBudget(BudgetEntity(name = name.trim(), currency = normalized))
+    }
+
+    suspend fun budgets() = dao.budgets()
+
+    suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long) {
+        require(amountMinor >= 0) { "Allocation cannot be negative" }
+        requireNotNull(dao.budget(budgetId)) { "Budget not found" }
+        dao.setAllocation(BudgetAllocationEntity(budgetId, month.toString(), amountMinor))
+    }
+
+    suspend fun budgetStatus(budgetId: Long, month: YearMonth, zone: ZoneId = ZoneId.systemDefault()): BudgetStatus {
+        val budget = requireNotNull(dao.budget(budgetId)) { "Budget not found" }
+        val from = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val until = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val allocated = dao.allocation(budgetId, month.toString()) ?: 0
+        val spent = saturated(dao.spentAmounts(budgetId, from, until))
+        return BudgetStatus(budget, allocated, spent, allocated - spent)
     }
 
     suspend fun archiveCategory(id: Long, archived: Boolean = true) {
@@ -39,6 +69,10 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         require(!account.archived) { "Account is archived" }
         val category = requireNotNull(dao.category(categoryId)) { "Category not found" }
         require(!category.archived && category.kind.name == kind.name) { "Category kind does not match entry" }
+        if (kind == EntryKind.EXPENSE) {
+            val budget = requireNotNull(dao.budget(category.budgetId)) { "Budget not found" }
+            require(budget.currency == account.currency) { "Budget and account currencies must match" }
+        }
         val delta = if (kind == EntryKind.INCOME) amountMinor else -amountMinor
         val balance = try { Math.addExact(account.balanceMinor, delta) } catch (_: ArithmeticException) {
             throw IllegalArgumentException("Balance overflow")
@@ -69,12 +103,13 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
     suspend fun categories(kind: CategoryKind, includeArchived: Boolean = false) = dao.categories(kind, includeArchived)
     suspend fun entries(accountId: Long? = null, from: Long = Long.MIN_VALUE, to: Long = Long.MAX_VALUE) = dao.entries(accountId, from, to)
     suspend fun totals(accountId: Long? = null, from: Long = Long.MIN_VALUE, to: Long = Long.MAX_VALUE): FinanceTotals {
-        fun saturated(values: List<Long>): Long = values.fold(0L) { total, value ->
-            if (Long.MAX_VALUE - total < value) Long.MAX_VALUE else total + value
-        }
         return FinanceTotals(
             incomeMinor = saturated(dao.amounts(EntryKind.INCOME, accountId, from, to)),
             expenseMinor = saturated(dao.amounts(EntryKind.EXPENSE, accountId, from, to)),
         )
+    }
+
+    private fun saturated(values: List<Long>): Long = values.fold(0L) { total, value ->
+        if (Long.MAX_VALUE - total < value) Long.MAX_VALUE else total + value
     }
 }

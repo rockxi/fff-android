@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.Query
 
 data class FinanceTotals(val incomeMinor: Long, val expenseMinor: Long)
+data class BudgetSpent(val amountMinor: Long)
 
 @Dao
 internal interface FinanceDao {
@@ -13,6 +14,15 @@ internal interface FinanceDao {
     @Query("SELECT * FROM accounts WHERE (:includeArchived OR archived = 0) ORDER BY createdAt, id") suspend fun accounts(includeArchived: Boolean = false): List<AccountEntity>
     @Query("UPDATE accounts SET archived = :archived WHERE id = :id") suspend fun setAccountArchived(id: Long, archived: Boolean): Int
     @Query("UPDATE accounts SET balanceMinor = :balance WHERE id = :id") suspend fun setBalance(id: Long, balance: Long): Int
+
+    @Insert suspend fun insertBudget(budget: BudgetEntity): Long
+    @Query("SELECT * FROM budgets ORDER BY id") suspend fun budgets(): List<BudgetEntity>
+    @Query("SELECT * FROM budgets WHERE id = :id") suspend fun budget(id: Long): BudgetEntity?
+    @Query("SELECT * FROM budgets WHERE name = :name LIMIT 1") suspend fun budgetByName(name: String): BudgetEntity?
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE) suspend fun setAllocation(allocation: BudgetAllocationEntity)
+    @Query("SELECT amountMinor FROM budget_allocations WHERE budgetId = :budgetId AND month = :month") suspend fun allocation(budgetId: Long, month: String): Long?
+    @Query("SELECT ledger_entries.amountMinor FROM ledger_entries INNER JOIN categories ON categories.id = ledger_entries.categoryId WHERE ledger_entries.kind = 'EXPENSE' AND categories.budgetId = :budgetId AND ledger_entries.occurredAt >= :from AND ledger_entries.occurredAt < :until")
+    suspend fun spentAmounts(budgetId: Long, from: Long, until: Long): List<Long>
 
     @Insert suspend fun insertCategory(category: CategoryEntity): Long
     @Query("SELECT * FROM categories WHERE id = :id") suspend fun category(id: Long): CategoryEntity?

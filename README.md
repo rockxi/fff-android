@@ -10,6 +10,18 @@ The app checks the latest GitHub release and offers to open its download page wh
 a newer semantic version is available. Existing data remains local during an
 in-place update.
 
+## Applications
+
+- **Finance** is a local-first ledger backed by Room/SQLite. It supports multiple
+  accounts, income and expense categories, transfers, and named monthly budgets.
+  Every category belongs to one budget; expenses consume the allocation for the
+  selected month. Expense accounts and their budgets must use the same currency.
+- **AI Harness** is the native chat for the FFF assistant. Pair the device with the
+  short code shown in the app and approve it personally with `/pair CODE` in the
+  Telegram AI topic. The bearer credential is encrypted with Android Keystore.
+  Unpairing durably revokes it, and the app returns to pairing if the server reports
+  that the session has expired.
+
 ## Build
 
 ```bash

@@ -9,6 +9,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
@@ -32,9 +37,10 @@ import java.math.BigDecimal
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
+import java.time.format.DateTimeFormatter
 
-private enum class FinanceTab(val title: String) { OVERVIEW("Обзор"), OPERATIONS("Операции"), ANALYTICS("Аналитика"), MANAGE("Управление") }
-private enum class DialogKind { ENTRY, ACCOUNT, CATEGORY }
+private enum class FinanceTab(val title: String) { OVERVIEW("Обзор"), BUDGETS("Бюджеты"), OPERATIONS("Операции"), ANALYTICS("Аналитика"), MANAGE("Ещё") }
+private enum class DialogKind { ENTRY, ACCOUNT, CATEGORY, BUDGET, ALLOCATION }
 
 @Composable
 fun FinanceScreen(onBack: () -> Unit) {
@@ -58,8 +64,8 @@ fun FinanceScreen(onBack: () -> Unit) {
         bottomBar = {
             NavigationBar(containerColor = Color(0xFF0B0F14)) {
                 FinanceTab.entries.forEach { item ->
-                    val icon = when(item) { FinanceTab.OVERVIEW -> Icons.Rounded.AccountBalanceWallet; FinanceTab.OPERATIONS -> Icons.AutoMirrored.Rounded.ReceiptLong; FinanceTab.ANALYTICS -> Icons.Rounded.PieChart; FinanceTab.MANAGE -> Icons.Rounded.Tune }
-                    NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Icon(icon, item.title) }, label = { Text(item.title, maxLines = 1, fontSize = 10.sp) })
+                    val icon = when(item) { FinanceTab.OVERVIEW -> Icons.Rounded.AccountBalanceWallet; FinanceTab.BUDGETS -> Icons.Rounded.Savings; FinanceTab.OPERATIONS -> Icons.AutoMirrored.Rounded.ReceiptLong; FinanceTab.ANALYTICS -> Icons.Rounded.PieChart; FinanceTab.MANAGE -> Icons.Rounded.Tune }
+                    NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Icon(icon, item.title, Modifier.size(21.dp)) }, label = { Text(item.title, maxLines = 1, fontSize = 9.sp) })
                 }
             }
         },
@@ -67,21 +73,53 @@ fun FinanceScreen(onBack: () -> Unit) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = FffMint)
-                else -> when(tab) {
+                else -> AnimatedContent(tab, transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) }, label = "finance-tab") { selected -> when(selected) {
                     FinanceTab.OVERVIEW -> Overview(state, onAdd = ::openDialog)
+                    FinanceTab.BUDGETS -> Budgets(state, model::changeMonth, ::openDialog)
                     FinanceTab.OPERATIONS -> Operations(state)
                     FinanceTab.ANALYTICS -> Analytics(state)
                     FinanceTab.MANAGE -> Management(state, ::openDialog, model::archiveAccount, model::archiveCategory)
-                }
+                } }
             }
             if (dialog == null) state.error?.let { ErrorBanner(it, Modifier.align(Alignment.TopCenter)) }
         }
     }
     when(dialog) {
         DialogKind.ACCOUNT -> AccountDialog(state.error, ::closeDialog) { name, currency, balance -> model.createAccount(name, currency, balance) { if (it) closeDialog() } }
-        DialogKind.CATEGORY -> CategoryDialog(state.error, ::closeDialog) { name, kind -> model.createCategory(name, kind) { if (it) closeDialog() } }
+        DialogKind.CATEGORY -> CategoryDialog(state, ::closeDialog) { name, kind, budget -> model.createCategory(name, kind, budget) { if (it) closeDialog() } }
+        DialogKind.BUDGET -> BudgetDialog(state.error, ::closeDialog) { name, currency -> model.createBudget(name, currency) { if (it) closeDialog() } }
+        DialogKind.ALLOCATION -> AllocationDialog(state, ::closeDialog) { budget, amount -> model.setAllocation(budget, amount) { if (it) closeDialog() } }
         DialogKind.ENTRY -> EntryDialog(state, ::closeDialog) { kind, amount, account, category, target, note -> model.addEntry(kind, amount, account, category, target, note) { if (it) closeDialog() } }
         null -> Unit
+    }
+}
+
+@Composable private fun Budgets(state: FinanceUiState, changeMonth: (Long) -> Unit, onAdd: (DialogKind) -> Unit) = LazyColumn(
+    Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp, 10.dp, 14.dp, 92.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
+) {
+    item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick={changeMonth(-1)}) { Icon(Icons.Rounded.ChevronLeft,"Предыдущий месяц") }
+        Text(state.selectedMonth.format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale("ru"))).replaceFirstChar { it.uppercase() }, Modifier.weight(1f), textAlign=androidx.compose.ui.text.style.TextAlign.Center, fontWeight=FontWeight.Bold)
+        IconButton(onClick={changeMonth(1)}) { Icon(Icons.Rounded.ChevronRight,"Следующий месяц") }
+    } }
+    item { Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        OutlinedButton({onAdd(DialogKind.BUDGET)}, Modifier.weight(1f)) { Text("Новый", maxLines=1) }
+        Button({onAdd(DialogKind.ALLOCATION)}, Modifier.weight(1f)) { Text("Распределить", maxLines=1) }
+    } }
+    items(state.budgetStatuses, key={it.budget.id}) { status -> BudgetCard(status) }
+}
+
+@Composable private fun BudgetCard(status: BudgetStatus) {
+    val ratio = if(status.allocatedMinor <= 0) if(status.spentMinor > 0) 1f else 0f else (status.spentMinor.toDouble()/status.allocatedMinor).coerceIn(0.0,1.0).toFloat()
+    val overspent = status.remainingMinor < 0
+    Column(Modifier.fillMaxWidth().background(FffSurface,RoundedCornerShape(16.dp)).border(1.dp,if(overspent) Color(0xFFFF7C9B) else FffLine,RoundedCornerShape(16.dp)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth()) { Text(status.budget.name,Modifier.weight(1f),fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis);Text(status.budget.currency,color=FffMuted,fontSize=11.sp) }
+        LinearProgressIndicator(progress={ratio},Modifier.fillMaxWidth(),color=if(overspent) Color(0xFFFF7C9B) else FffMint,trackColor=FffLine)
+        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+            Text("Выделено ${formatMoney(status.allocatedMinor,status.budget.currency)}",Modifier.fillMaxWidth(),fontSize=11.sp,color=FffMuted,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text("Потрачено ${formatMoney(status.spentMinor,status.budget.currency)}",Modifier.fillMaxWidth(),fontSize=11.sp,color=FffMuted,maxLines=1,overflow=TextOverflow.Ellipsis)
+        }
+        Text((if(overspent) "Перерасход " else "Осталось ")+formatMoney(kotlin.math.abs(status.remainingMinor),status.budget.currency),color=if(overspent) Color(0xFFFF7C9B) else FffMint,fontWeight=FontWeight.SemiBold)
     }
 }
 
@@ -140,7 +178,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     items(state.allAccounts, key = { "a${it.id}" }) { entity -> ManageRow(entity.name, "${entity.currency} · ${formatMoney(entity.balanceMinor, entity.currency)}", entity.archived) { archiveAccount(entity.id) } }
     item { Spacer(Modifier.height(8.dp)); ManagementHeading("Категории", "Новая категория") { onAdd(DialogKind.CATEGORY) } }
     if (state.allCategories.isEmpty()) item { EmptyText("Категорий нет") }
-    items(state.allCategories, key = { "c${it.id}" }) { entity -> ManageRow(entity.name, if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход", entity.archived) { archiveCategory(entity.id) } }
+    items(state.allCategories, key = { "c${it.id}" }) { entity -> val budget=state.budgets.firstOrNull{it.id==entity.budgetId}?.name ?: "—"; ManageRow(entity.name, (if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход")+" · $budget", entity.archived) { archiveCategory(entity.id) } }
 }
 
 @Composable private fun ManagementHeading(title: String, action: String, onClick: () -> Unit) = Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -177,17 +215,19 @@ fun FinanceScreen(onBack: () -> Unit) {
     var name by remember { mutableStateOf("") }; var currency by remember { mutableStateOf("RUB") }; var balance by remember { mutableStateOf("") }
     FormDialog("Новый счёт", error, dismiss, { save(name,currency,balance) }) { Field("Название",name){name=it}; Field("Валюта (RUB, USD…)",currency){currency=it}; Field("Начальный баланс",balance){balance=it} }
 }
-@Composable private fun CategoryDialog(error: String?, dismiss: () -> Unit, save: (String,CategoryKind)->Unit) {
-    var name by remember { mutableStateOf("") }; var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }
-    FormDialog("Новая категория", error, dismiss, { save(name,kind) }) { Field("Название",name){name=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it} }
+@Composable private fun CategoryDialog(state: FinanceUiState, dismiss: () -> Unit, save: (String,CategoryKind,Long?)->Unit) {
+    var name by remember { mutableStateOf("") }; var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }; var budget by remember { mutableStateOf<Long?>(null) }
+    FormDialog("Новая категория", state.error, dismiss, { save(name,kind,budget) }) { Field("Название",name){name=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it}; SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"}){budget=it} }
 }
+@Composable private fun BudgetDialog(error:String?,dismiss:()->Unit,save:(String,String)->Unit){var name by remember{mutableStateOf("")};var currency by remember{mutableStateOf("RUB")};FormDialog("Новый бюджет",error,dismiss,{save(name,currency)}){Field("Название",name){name=it};Field("Валюта",currency){currency=it}}}
+@Composable private fun AllocationDialog(state:FinanceUiState,dismiss:()->Unit,save:(Long?,String)->Unit){var budget by remember{mutableStateOf<Long?>(state.budgets.firstOrNull()?.id)};var amount by remember{mutableStateOf("")};FormDialog("Бюджет на месяц",state.error,dismiss,{save(budget,amount)}){SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"}){budget=it};Field("Сумма",amount){amount=it}}}
 @Composable private fun EntryDialog(state: FinanceUiState, dismiss: () -> Unit, save:(EntryKind,String,Long?,Long?,Long?,String)->Unit) {
     val allowed = availableEntryKinds(state)
     var form by remember { mutableStateOf(OperationFormState(kind = allowed.firstOrNull() ?: EntryKind.EXPENSE, accountId = state.accounts.firstOrNull()?.id)) }; var amount by remember { mutableStateOf("") }; var note by remember { mutableStateOf("") }
-    val cats = if(form.kind==EntryKind.INCOME) state.incomeCategories else state.expenseCategories
+    val cats = form.categories(state)
     FormDialog("Новая операция",state.error,dismiss,{save(form.kind,amount,form.accountId,form.categoryId,form.targetAccountId,note)}) {
         ChoiceRow(listOf("Расход" to EntryKind.EXPENSE,"Доход" to EntryKind.INCOME,"Перевод" to EntryKind.TRANSFER).filter { it.second in allowed },form.kind){form=form.selectKind(it)}
-        Field("Сумма",amount){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name}){form=form.selectSource(it)}
+        Field("Сумма",amount){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name}){form=form.selectSource(it,state)}
         if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name}){form=form.copy(targetAccountId=it)}
         else SelectList("Категория",cats,form.categoryId,{it.id},{it.name}){form=form.copy(categoryId=it)}
         Field("Комментарий (необязательно)",note){note=it}

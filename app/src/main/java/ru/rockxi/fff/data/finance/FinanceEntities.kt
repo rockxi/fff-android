@@ -14,6 +14,7 @@ data class BudgetEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val currency: String,
+    @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
 )
 
 @Entity(
@@ -46,6 +47,7 @@ data class CategoryEntity(
     val archived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "2") val budgetId: Long = 2,
+    @ColumnInfo(defaultValue = "'🏷️'") val emoji: String = "🏷️",
 )
 
 @Entity(

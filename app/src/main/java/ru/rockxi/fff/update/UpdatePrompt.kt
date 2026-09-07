@@ -7,10 +7,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import ru.rockxi.fff.BuildConfig
+import ru.rockxi.fff.ui.components.FffModal
 
 @Composable
 fun UpdatePrompt(
@@ -86,36 +85,71 @@ fun UpdatePrompt(
 
     val release = availableRelease
     if (!automaticChecksEnabled && !consentPromptDismissed) {
-        AlertDialog(
-            onDismissRequest = { consentPromptDismissed = true },
-            title = { Text("Проверять обновления?") },
-            text = {
-                Text(
-                    "После вашего согласия FFF будет обращаться к GitHub при запуске, " +
-                        "чтобы сообщать о новых версиях. Без согласия сетевых запросов не будет.",
-                )
+        FffModal(
+            title = "Проверять обновления?",
+            onDismiss = { consentPromptDismissed = true },
+            dismissText = "Не сейчас",
+            confirmText = "Включить и проверить",
+            onConfirm = {
+                preferences.edit().putBoolean(AUTOMATIC_CHECKS_KEY, true).apply()
+                automaticChecksEnabled = true
+                checkRequested = true
             },
-            dismissButton = {
-                TextButton(onClick = { consentPromptDismissed = true }) { Text("Не сейчас") }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        preferences.edit().putBoolean(AUTOMATIC_CHECKS_KEY, true).apply()
-                        automaticChecksEnabled = true
-                        checkRequested = true
-                    },
-                ) {
-                    Text("Включить и проверить")
+        ) {
+            Text(
+                "После вашего согласия FFF будет обращаться к GitHub при запуске, " +
+                    "чтобы сообщать о новых версиях. Без согласия сетевых запросов не будет.",
+            )
+        }
+    } else if (release != null && !dismissed) {
+        val downloading = promptState.downloadState is UpdateDownloadState.Downloading
+        val dismissUpdate = {
+            if (downloading) {
+                downloadAttempt += 1
+                promptState = promptState.cancelDownload(downloadAttempt)
+                downloadJob?.cancel()
+                downloadJob = null
+            } else {
+                dismissed = true
+            }
+        }
+        FffModal(
+            title = "Доступно обновление",
+            onDismiss = dismissUpdate,
+            dismissText = if (downloading) "Отменить" else "Позже",
+            confirmText = if (promptState.downloadState is UpdateDownloadState.Ready) "Установить" else if (promptState.downloadState is UpdateDownloadState.Failed) "Повторить" else "Скачать",
+            confirmEnabled = !downloading && !promptState.awaitingPermission,
+            dismissOnBackPress = !downloading,
+            dismissOnClickOutside = !downloading,
+            onConfirm = {
+                val ready = promptState.downloadState as? UpdateDownloadState.Ready
+                if (ready != null) {
+                    install(ready.apk)
+                } else if (!downloading) {
+                    val attempt = ++downloadAttempt
+                    promptState = promptState.confirmDownload(attempt)
+                    downloadJob = scope.launch {
+                        val destination = updateDestination(context.cacheDir, release.tagName, attempt)
+                        try {
+                            val apk = withContext(Dispatchers.IO) {
+                                downloadController.download(release, destination) { state ->
+                                    scope.launch { promptState = promptState.onDownloadState(attempt, state) }
+                                }
+                            }
+                            if (apk != null && promptState.canComplete(attempt)) {
+                                promptState = promptState.completeDownload(attempt, apk)
+                                install(apk)
+                            }
+                        } catch (_: CancellationException) {
+                            // The cancel action already publishes the user-visible state.
+                        } finally {
+                            if (downloadAttempt == attempt) downloadJob = null
+                        }
+                    }
                 }
             },
-        )
-    } else if (release != null && !dismissed) {
-        AlertDialog(
-            onDismissRequest = { if (promptState.downloadState !is UpdateDownloadState.Downloading) dismissed = true },
-            title = { Text("Доступно обновление") },
-            text = {
-                Column {
+        ) {
+            Column {
                     Text("Версия ${release.tagName} уже опубликована. Скачать и установить обновление?")
                     when (val state = promptState.downloadState) {
                         is UpdateDownloadState.Downloading -> {
@@ -129,55 +163,8 @@ fun UpdatePrompt(
                         UpdateDownloadState.Idle -> Unit
                     }
                     promptState.message?.let { Text(it, modifier = Modifier.padding(top = 10.dp)) }
-                }
-            },
-            dismissButton = {
-                if (promptState.downloadState is UpdateDownloadState.Downloading) {
-                    TextButton(onClick = {
-                        downloadAttempt += 1
-                        promptState = promptState.cancelDownload(downloadAttempt)
-                        downloadJob?.cancel()
-                        downloadJob = null
-                    }) { Text("Отменить") }
-                } else {
-                    TextButton(onClick = { dismissed = true }) { Text("Позже") }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val ready = promptState.downloadState as? UpdateDownloadState.Ready
-                        if (ready != null) {
-                            install(ready.apk)
-                        } else if (promptState.downloadState !is UpdateDownloadState.Downloading) {
-                            val attempt = ++downloadAttempt
-                            promptState = promptState.confirmDownload(attempt)
-                            downloadJob = scope.launch {
-                                val destination = updateDestination(context.cacheDir, release.tagName, attempt)
-                                try {
-                                    val apk = withContext(Dispatchers.IO) {
-                                        downloadController.download(release, destination) { state ->
-                                            scope.launch { promptState = promptState.onDownloadState(attempt, state) }
-                                        }
-                                    }
-                                    if (apk != null && promptState.canComplete(attempt)) {
-                                        promptState = promptState.completeDownload(attempt, apk)
-                                        install(apk)
-                                    }
-                                } catch (_: CancellationException) {
-                                    // The cancel action already publishes the user-visible state.
-                                } finally {
-                                    if (downloadAttempt == attempt) downloadJob = null
-                                }
-                            }
-                        }
-                    },
-                    enabled = promptState.downloadState !is UpdateDownloadState.Downloading && !promptState.awaitingPermission,
-                ) {
-                    Text(if (promptState.downloadState is UpdateDownloadState.Ready) "Установить" else if (promptState.downloadState is UpdateDownloadState.Failed) "Повторить" else "Скачать")
-                }
-            },
-        )
+            }
+        }
     }
 }
 

@@ -14,9 +14,11 @@ remains local during an in-place update.
 ## Applications
 
 - **Finance** is a local-first ledger backed by Room/SQLite. It supports multiple
-  accounts, income and expense categories, transfers, and named monthly budgets.
-  Every category belongs to one budget; expenses consume the allocation for the
-  selected month. Expense accounts and their budgets must use the same currency.
+  accounts, emoji categories, transfers, and named monthly budgets with category
+  breakdowns. Accounts, categories and budgets can be archived or safely deleted;
+  deleting an operation reverses its balance effect. Versioned local JSON backups
+  can be exported and restored through Android's document picker. Every category
+  belongs to one budget; expense accounts and budgets must use the same currency.
 - **AI Harness** is the native chat for the FFF assistant. Pair the device with the
   short code shown in the app and approve it personally with `/pair CODE` in the
   Telegram AI topic. The bearer credential is encrypted with Android Keystore.

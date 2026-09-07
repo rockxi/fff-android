@@ -11,12 +11,16 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import ru.rockxi.fff.data.finance.*
 import java.time.YearMonth
+import java.time.ZoneId
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinanceViewModelTest {
@@ -127,7 +131,7 @@ class FinanceViewModelTest {
     @Test fun `category requires explicit budget`() = runTest(dispatcher) {
         val model = FinanceViewModel(FakeStore(), dispatcher); advanceUntilIdle()
         var success:Boolean?=null
-        model.createCategory("Food",CategoryKind.EXPENSE,null){success=it}
+        model.createCategory("Food",CategoryKind.EXPENSE,null,"🍜"){success=it}
         assertEquals(false,success); assertEquals("Выберите бюджет",model.state.value.error)
     }
 
@@ -181,6 +185,82 @@ class FinanceViewModelTest {
         assertTrue(EntryKind.EXPENSE in availableEntryKinds(state))
         assertTrue(EntryKind.EXPENSE !in availableEntryKinds(state.copy(budgets=listOf(rubBudget),expenseCategories=listOf(usdCategory))))
     }
+
+    @Test fun `category grid always has four columns and keeps every category`() {
+        val categories = (1L..11L).map { CategoryEntity(it, "Категория $it", CategoryKind.EXPENSE, budgetId = 1, emoji = "🍜") }
+        val rows = categoryGridRows(categories)
+        assertEquals(listOf(4, 4, 3), rows.map { it.size })
+        assertEquals(categories.map { it.id }, rows.flatten().map { it.id })
+    }
+
+    @Test fun `back is consumed only by an open budget detail`() {
+        assertTrue(shouldCloseBudgetDetailsOnBack(isBudgetsTab = true, selectedBudgetId = 42))
+        assertFalse(shouldCloseBudgetDetailsOnBack(isBudgetsTab = true, selectedBudgetId = null))
+        assertFalse(shouldCloseBudgetDetailsOnBack(isBudgetsTab = false, selectedBudgetId = 42))
+    }
+
+    @Test fun `budget breakdown uses exact local month bounds and includes archived categories`() {
+        val zone = ZoneId.of("Europe/Moscow")
+        val month = YearMonth.of(2026, 9)
+        val from = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val until = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val category = CategoryEntity(7, "Архивная", CategoryKind.EXPENSE, archived = true, budgetId = 3, emoji = "📦")
+        val entries = listOf(
+            LedgerEntryEntity(1, EntryKind.EXPENSE, 10, 1, categoryId = 7, occurredAt = from - 1),
+            LedgerEntryEntity(2, EntryKind.EXPENSE, 20, 1, categoryId = 7, occurredAt = from),
+            LedgerEntryEntity(3, EntryKind.EXPENSE, 30, 1, categoryId = 7, occurredAt = until - 1),
+            LedgerEntryEntity(4, EntryKind.EXPENSE, 40, 1, categoryId = 7, occurredAt = until),
+            LedgerEntryEntity(5, EntryKind.INCOME, 50, 1, categoryId = 7, occurredAt = from),
+        )
+        val result = budgetBreakdown(3, month, listOf(category), entries, zone)
+        assertEquals(listOf(3L, 2L), result.entries.map { it.id })
+        assertEquals(50L, result.categories.single().amountMinor)
+        assertEquals(category, result.categories.single().category)
+    }
+
+    @Test fun `backup streams run through store and expose success`() = runTest(dispatcher) {
+        val store = FakeStore()
+        val model = FinanceViewModel(store, dispatcher)
+        advanceUntilIdle()
+        val output = ByteArrayOutputStream()
+        var exported: Boolean? = null
+        model.createBackup(openOutput = { output }) { exported = it }
+        advanceUntilIdle()
+        assertEquals(true, exported)
+        assertEquals("backup", output.toString(Charsets.UTF_8.name()))
+        assertEquals("Резервная копия сохранена", model.state.value.notice)
+
+        var restored: Boolean? = null
+        model.restoreBackup(openInput = { ByteArrayInputStream("restored".toByteArray()) }) { restored = it }
+        advanceUntilIdle()
+        assertEquals(true, restored)
+        assertEquals("restored", store.restoredDocument)
+        assertEquals("Данные восстановлены", model.state.value.notice)
+    }
+
+    @Test fun `backup export and restore are one atomic flight`() = runTest(dispatcher) {
+        val store = FakeStore().apply { exportGate = CompletableDeferred() }
+        val model = FinanceViewModel(store, dispatcher)
+        advanceUntilIdle()
+        var firstResult: Boolean? = null
+        var rejectedResult: Boolean? = null
+
+        assertTrue(model.createBackup(openOutput = { ByteArrayOutputStream() }) { firstResult = it })
+        runCurrent()
+        assertTrue(model.state.value.backupBusy)
+        assertTrue(store.exportStarted.isCompleted)
+
+        assertFalse(model.restoreBackup(openInput = { ByteArrayInputStream("late".toByteArray()) }) { rejectedResult = it })
+        assertEquals(false, rejectedResult)
+        assertTrue(model.state.value.backupBusy)
+        assertNull(store.restoredDocument)
+
+        store.exportGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(true, firstResult)
+        assertFalse(model.state.value.backupBusy)
+        assertEquals("Резервная копия сохранена", model.state.value.notice)
+    }
 }
 
 private class FakeStore : FinanceStore {
@@ -196,14 +276,28 @@ private class FakeStore : FinanceStore {
     override suspend fun categories(kind: CategoryKind, includeArchived: Boolean) = categories.filter { it.kind == kind && (includeArchived || !it.archived) }
     override suspend fun entries() = entries.sortedByDescending { it.occurredAt }
     override suspend fun totals() = FinanceTotals(entries.filter { it.kind == EntryKind.INCOME }.sumOf { it.amountMinor }, entries.filter { it.kind == EntryKind.EXPENSE }.sumOf { it.amountMinor })
-    override suspend fun budgets()=budgetList
+    var restoredDocument: String? = null
+    var exportGate: CompletableDeferred<Unit>? = null
+    val exportStarted = CompletableDeferred<Unit>()
+    override suspend fun budgets(includeArchived: Boolean)=budgetList.filter { includeArchived || !it.archived }
     override suspend fun budgetStatus(budgetId:Long,month:YearMonth):BudgetStatus { val response=statusResponses[month]?.removeFirstOrNull(); val wait=response?.first?:statusDelays[month]; wait?.let { withContext(NonCancellable) { delay(it) } }; val b=budgetList.single{it.id==budgetId};val a=response?.second?:allocations[budgetId to month]?:0;val s=spending[budgetId to month]?:0;return BudgetStatus(b,a,s,a-s) }
     override suspend fun createBudget(name:String,currency:String):Long { val id=(budgetList.size+1).toLong();budgetList+=BudgetEntity(id,name,currency);return id }
     override suspend fun allocate(budgetId:Long,month:YearMonth,amountMinor:Long){allocations[budgetId to month]=amountMinor}
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long { val id=(accounts.size+1).toLong(); accounts += AccountEntity(id,name,currency.uppercase(),initialBalanceMinor); return id }
-    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId:Long): Long { val id=(categories.size+1).toLong(); categories += CategoryEntity(id,name,kind,budgetId=budgetId); return id }
-    override suspend fun archiveAccount(id: Long) { val i=accounts.indexOfFirst{it.id==id}; accounts[i]=accounts[i].copy(archived=true) }
-    override suspend fun archiveCategory(id: Long) { val i=categories.indexOfFirst{it.id==id}; categories[i]=categories[i].copy(archived=true) }
+    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId:Long, emoji:String): Long { val id=(categories.size+1).toLong(); categories += CategoryEntity(id,name,kind,budgetId=budgetId,emoji=emoji); return id }
+    override suspend fun archiveAccount(id: Long, archived:Boolean) { val i=accounts.indexOfFirst{it.id==id}; accounts[i]=accounts[i].copy(archived=archived) }
+    override suspend fun archiveCategory(id: Long, archived:Boolean) { val i=categories.indexOfFirst{it.id==id}; categories[i]=categories[i].copy(archived=archived) }
+    override suspend fun archiveBudget(id: Long, archived:Boolean) { val i=budgetList.indexOfFirst{it.id==id}; budgetList[i]=budgetList[i].copy(archived=archived) }
+    override suspend fun deleteAccount(id: Long) { accounts.removeAll { it.id == id } }
+    override suspend fun deleteCategory(id: Long) { categories.removeAll { it.id == id } }
+    override suspend fun deleteBudget(id: Long) { budgetList.removeAll { it.id == id } }
+    override suspend fun deleteEntry(id: Long) { entries.removeAll { it.id == id } }
+    override suspend fun exportBackup(output: java.io.OutputStream) {
+        exportStarted.complete(Unit)
+        exportGate?.await()
+        output.writer().use { it.write("backup") }
+    }
+    override suspend fun restoreBackup(input: java.io.InputStream) { restoredDocument = input.reader().use { it.readText() } }
     override suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long = add(EntryKind.INCOME,accountId,categoryId,null,amountMinor,note)
     override suspend fun addExpense(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long = add(EntryKind.EXPENSE,accountId,categoryId,null,amountMinor,note)
     override suspend fun transfer(fromAccountId: Long, toAccountId: Long, amountMinor: Long, note: String): Long = add(EntryKind.TRANSFER,fromAccountId,null,toAccountId,amountMinor,note)

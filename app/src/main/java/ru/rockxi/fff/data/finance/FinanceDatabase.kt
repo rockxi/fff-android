@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [AccountEntity::class, BudgetEntity::class, BudgetAllocationEntity::class, CategoryEntity::class, LedgerEntryEntity::class], version = 2, exportSchema = false)
+@Database(entities = [AccountEntity::class, BudgetEntity::class, BudgetAllocationEntity::class, CategoryEntity::class, LedgerEntryEntity::class], version = 3, exportSchema = false)
 @TypeConverters(FinanceConverters::class)
 internal abstract class FinanceDatabase : RoomDatabase() {
     internal abstract fun financeDao(): FinanceDao
@@ -46,6 +46,12 @@ internal abstract class FinanceDatabase : RoomDatabase() {
                 installInvariantTrigger(db)
             }
         }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE budgets ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE categories ADD COLUMN emoji TEXT NOT NULL DEFAULT '🏷️'")
+            }
+        }
         @Volatile private var instance: FinanceDatabase? = null
         private val invariantCallback = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) = seedBudgets(db)
@@ -68,7 +74,7 @@ internal abstract class FinanceDatabase : RoomDatabase() {
         }
         fun get(context: Context): FinanceDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, FinanceDatabase::class.java, "fff-finance.db")
-                .addMigrations(MIGRATION_1_2).addCallback(invariantCallback).build().also { instance = it }
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(invariantCallback).build().also { instance = it }
         }
 
         fun inMemory(context: Context): FinanceDatabase =

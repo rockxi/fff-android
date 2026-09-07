@@ -8,6 +8,7 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -109,7 +110,7 @@ class FinanceRepositoryTest {
         helper.close()
 
         val migrated = Room.databaseBuilder(context, FinanceDatabase::class.java, name)
-            .addMigrations(FinanceDatabase.MIGRATION_1_2).build()
+            .addMigrations(FinanceDatabase.MIGRATION_1_2, FinanceDatabase.MIGRATION_2_3).build()
         try {
             val dao = migrated.financeDao()
             assertEquals(900, dao.account(7)!!.balanceMinor)
@@ -221,6 +222,179 @@ class FinanceRepositoryTest {
             )
         }
         assertTrue(db.financeDao().entries().isEmpty())
+    }
+
+    @Test fun operationDeletionReversesIncomeExpenseAndTransferAtomically() = runBlocking {
+        val cash = repo.createAccount("Cash", "RUB", 1_000)
+        val card = repo.createAccount("Card", "RUB")
+        val salary = repo.createCategory("Salary", CategoryKind.INCOME, emoji = "💰")
+        val food = repo.createCategory("Food", CategoryKind.EXPENSE, emoji = "🍜")
+        val income = repo.addIncome(cash, salary, 100)
+        val expense = repo.addExpense(cash, food, 40)
+        val transfer = repo.transfer(cash, card, 60)
+
+        repo.deleteEntry(transfer)
+        assertEquals(1_060, repo.accounts().single { it.id == cash }.balanceMinor)
+        assertEquals(0, repo.accounts().single { it.id == card }.balanceMinor)
+        repo.deleteEntry(expense)
+        assertEquals(1_100, repo.accounts().single { it.id == cash }.balanceMinor)
+        repo.deleteEntry(income)
+        assertEquals(1_000, repo.accounts().single { it.id == cash }.balanceMinor)
+        assertTrue(repo.entries().isEmpty())
+    }
+
+    @Test fun operationDeletionOverflowRollsBackBalanceAndHistory() = runBlocking {
+        val account = repo.createAccount("Cash", "RUB")
+        val income = repo.createCategory("Salary", CategoryKind.INCOME)
+        val entry = repo.addIncome(account, income, 1)
+        db.financeDao().setBalance(account, Long.MIN_VALUE)
+
+        assertFails { repo.deleteEntry(entry) }
+
+        assertEquals(Long.MIN_VALUE, repo.accounts().single { it.id == account }.balanceMinor)
+        assertEquals(entry, repo.entries().single().id)
+    }
+
+    @Test fun permanentDeletionRequiresArchiveAndNoDependencies() = runBlocking {
+        val budget = repo.createBudget("Trip", "RUB")
+        val category = repo.createCategory("Tickets", CategoryKind.EXPENSE, budget, "✈️")
+        val account = repo.createAccount("Cash", "RUB", 100)
+        val entry = repo.addExpense(account, category, 10)
+        assertFails { repo.deleteAccount(account) }
+        repo.archiveAccount(account)
+        assertFails { repo.deleteAccount(account) }
+        repo.archiveCategory(category)
+        assertFails { repo.deleteCategory(category) }
+        repo.archiveBudget(budget)
+        assertFails { repo.deleteBudget(budget) }
+
+        repo.deleteEntry(entry)
+        repo.deleteAccount(account)
+        repo.deleteCategory(category)
+        repo.allocate(budget, YearMonth.of(2026, 9), 100)
+        assertFails { repo.deleteBudget(budget) }
+        repo.removeAllocation(budget, YearMonth.of(2026, 9))
+        repo.deleteBudget(budget)
+        assertTrue(repo.accounts(true).none { it.id == account })
+        assertTrue(repo.categories(CategoryKind.EXPENSE, true).none { it.id == category })
+        assertTrue(repo.budgets(true).none { it.id == budget })
+    }
+
+    @Test fun backupRoundTripPreservesEveryTableArchiveIdAndEmoji() = runBlocking {
+        val budget = repo.createBudget("Travel", "USD")
+        val account = repo.createAccount("Wallet", "USD", 1_000)
+        val category = repo.createCategory("Flights", CategoryKind.EXPENSE, budget, "🛫")
+        repo.allocate(budget, YearMonth.of(2026, 10), 900)
+        val entry = repo.addExpense(account, category, 125, "ticket", 123456)
+        repo.archiveAccount(account)
+        repo.archiveCategory(category)
+        repo.archiveBudget(budget)
+        val document = repo.exportBackup()
+        val extra = repo.createAccount("Must disappear", "RUB")
+
+        repo.restoreBackup(document.byteInputStream())
+
+        assertTrue(repo.accounts(true).none { it.id == extra })
+        assertEquals(AccountEntity(account, "Wallet", "USD", 875, true, repo.accounts(true).single { it.id == account }.createdAt), repo.accounts(true).single { it.id == account })
+        assertEquals("🛫", repo.categories(CategoryKind.EXPENSE, true).single { it.id == category }.emoji)
+        assertTrue(repo.budgets(true).single { it.id == budget }.archived)
+        assertEquals(900L, db.financeDao().allocation(budget, "2026-10"))
+        assertEquals(entry, repo.entries().single { it.note == "ticket" }.id)
+    }
+
+    @Test fun invalidBackupLeavesExistingDatabaseUntouched() = runBlocking {
+        val account = repo.createAccount("Cash", "RUB", 500)
+        val category = repo.createCategory("Food", CategoryKind.EXPENSE)
+        repo.addExpense(account, category, 25)
+        val valid = FinanceBackupCodec.decode(repo.exportBackup())
+        val invalidEntry = valid.entries.single().copy(kind = EntryKind.INCOME.name)
+        val invalid = FinanceBackupCodec.encode(valid.copy(entries = listOf(invalidEntry)))
+
+        assertFails { repo.restoreBackup(invalid) }
+
+        assertEquals(475, repo.accounts().single { it.id == account }.balanceMinor)
+        assertEquals(EntryKind.EXPENSE, repo.entries().single().kind)
+    }
+
+    @Test fun oversizedStringBackupIsRejectedBeforeDecodeWithoutMutation() = runBlocking {
+        val account = repo.createAccount("Keep", "RUB", 321)
+        val oversized = "{" + "x".repeat(16 * 1024 * 1024) + "}"
+
+        assertFails { repo.restoreBackup(oversized) }
+
+        assertEquals(321, repo.accounts().single { it.id == account }.balanceMinor)
+    }
+
+    @Test fun backupCodecRejectsWrongPrimitiveTypesWithoutMutation() = runBlocking {
+        val account = repo.createAccount("Keep", "RUB", 123)
+        val valid = repo.exportBackup()
+        val malformed = listOf(
+            valid.replaceFirst("\"formatVersion\": 1", "\"formatVersion\": \"1\""),
+            valid.replaceFirst("\"name\": \"Keep\"", "\"name\": 7"),
+            valid.replaceFirst("\"archived\": false", "\"archived\": \"false\""),
+        )
+
+        malformed.forEach { document -> assertFails { repo.restoreBackup(document) } }
+
+        assertEquals(123, repo.accounts().single { it.id == account }.balanceMinor)
+    }
+
+    @Test fun failedBudgetDeleteChecksAndDeleteAreAtomicAndPreserveDependencies() = runBlocking {
+        val budget = repo.createBudget("Protected", "RUB")
+        repo.allocate(budget, YearMonth.of(2027, 1), 500)
+        repo.archiveBudget(budget)
+
+        assertFails { repo.deleteBudget(budget) }
+
+        assertTrue(repo.budgets(true).any { it.id == budget })
+        assertEquals(500L, db.financeDao().allocation(budget, "2027-01"))
+    }
+
+    @Test fun migrationFromV2PreservesRowsAndAddsArchiveAndEmojiDefaults() = runBlocking {
+        db.close()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v2-v3-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context).name(name).callback(object : SupportSQLiteOpenHelper.Callback(2) {
+                override fun onCreate(sql: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    sql.execSQL("CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, currency TEXT NOT NULL, balanceMinor INTEGER NOT NULL, archived INTEGER NOT NULL, createdAt INTEGER NOT NULL)")
+                    sql.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, currency TEXT NOT NULL)")
+                    sql.execSQL("CREATE UNIQUE INDEX index_budgets_name ON budgets(name)")
+                    sql.execSQL("CREATE TABLE budget_allocations (budgetId INTEGER NOT NULL, month TEXT NOT NULL, amountMinor INTEGER NOT NULL, PRIMARY KEY(budgetId,month), FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE)")
+                    sql.execSQL("CREATE INDEX index_budget_allocations_budgetId ON budget_allocations(budgetId)")
+                    sql.execSQL("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, archived INTEGER NOT NULL, createdAt INTEGER NOT NULL, budgetId INTEGER NOT NULL DEFAULT 2, FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE RESTRICT)")
+                    sql.execSQL("CREATE INDEX index_categories_budgetId ON categories(budgetId)")
+                    sql.execSQL("CREATE TABLE ledger_entries (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, amountMinor INTEGER NOT NULL, accountId INTEGER NOT NULL, transferAccountId INTEGER, categoryId INTEGER, note TEXT NOT NULL, occurredAt INTEGER NOT NULL, FOREIGN KEY(accountId) REFERENCES accounts(id) ON DELETE RESTRICT, FOREIGN KEY(transferAccountId) REFERENCES accounts(id) ON DELETE RESTRICT, FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE RESTRICT)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_accountId ON ledger_entries(accountId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_transferAccountId ON ledger_entries(transferAccountId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_categoryId ON ledger_entries(categoryId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_occurredAt ON ledger_entries(occurredAt)")
+                    sql.execSQL("INSERT INTO budgets VALUES(8,'Legacy','EUR')")
+                    sql.execSQL("INSERT INTO accounts VALUES(9,'Cash','EUR',75,1,100)")
+                    sql.execSQL("INSERT INTO categories VALUES(10,'Food','EXPENSE',1,101,8)")
+                    sql.execSQL("INSERT INTO budget_allocations VALUES(8,'2026-09',50)")
+                    sql.execSQL("INSERT INTO ledger_entries VALUES(11,'EXPENSE',25,9,NULL,10,'meal',102)")
+                }
+                override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            }).build(),
+        )
+        helper.writableDatabase
+        helper.close()
+        val migrated = Room.databaseBuilder(context, FinanceDatabase::class.java, name)
+            .addMigrations(FinanceDatabase.MIGRATION_2_3).build()
+        try {
+            val migratedRepo = FinanceRepository(migrated)
+            assertEquals("🏷️", migratedRepo.categories(CategoryKind.EXPENSE, true).single().emoji)
+            assertTrue(migratedRepo.accounts(true).single().archived)
+            assertFalse(migratedRepo.budgets(true).single().archived)
+            assertEquals(11, migratedRepo.entries().single().id)
+            assertEquals(50L, migrated.financeDao().allocation(8, "2026-09"))
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+            db = FinanceDatabase.inMemory(context)
+            repo = FinanceRepository(db)
+        }
     }
 
     private suspend fun assertFails(block: suspend () -> Unit) {

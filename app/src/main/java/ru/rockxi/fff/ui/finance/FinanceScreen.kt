@@ -183,7 +183,7 @@ fun FinanceScreen(onBack: () -> Unit) {
         OutlinedButton({onAdd(DialogKind.BUDGET)}, Modifier.weight(1f)) { Text("Новый", maxLines=1) }
         Button({onAdd(DialogKind.ALLOCATION)}, Modifier.weight(1f)) { Text("Распределить", maxLines=1) }
     } }
-    items(state.budgetStatuses, key={it.budget.id}) { status -> BudgetCard(status) { onBudget(status.budget.id) } }
+    items(state.budgetStatuses, key={ financeItemKey("budget", it.budget.id) }) { status -> BudgetCard(status) { onBudget(status.budget.id) } }
 }
 
 @Composable private fun BudgetDetails(state: FinanceUiState, budgetId: Long, onBack: () -> Unit, requestDelete: (LedgerEntryEntity) -> Unit) {
@@ -193,19 +193,19 @@ fun FinanceScreen(onBack: () -> Unit) {
         budgetBreakdown(budgetId, state.selectedMonth, state.allCategories, state.entries)
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp, 8.dp, 14.dp, 92.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "К бюджетам") }; Column { Text(budget.name, fontSize = 22.sp, fontWeight = FontWeight.Bold); Text(state.selectedMonth.format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale("ru"))), color = FffMuted) } } }
-        if (status != null) item { BudgetCard(status, {}) }
-        item { SectionTitle("По категориям") }
-        if (breakdown.categories.isEmpty()) item { EmptyText("В этом месяце расходов пока нет") }
-        items(breakdown.categories, key = { it.category.id }) { item ->
+        item(key = "budget-detail:header") { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "К бюджетам") }; Column { Text(budget.name, fontSize = 22.sp, fontWeight = FontWeight.Bold); Text(state.selectedMonth.format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale("ru"))), color = FffMuted) } } }
+        if (status != null) item(key = "budget-detail:status") { BudgetCard(status, {}) }
+        item(key = "budget-detail:categories-heading") { SectionTitle("По категориям") }
+        if (breakdown.categories.isEmpty()) item(key = "budget-detail:categories-empty") { EmptyText("В этом месяце расходов пока нет") }
+        items(breakdown.categories, key = { financeItemKey("budget-category", it.category.id) }) { item ->
             Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(14.dp)).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(item.category.emoji, fontSize = 28.sp)
                 Text(item.category.name, Modifier.padding(start = 12.dp).weight(1f))
                 Text(formatMoney(item.amountMinor, budget.currency), color = Color(0xFFFF7C9B), fontWeight = FontWeight.Bold)
             }
         }
-        item { SectionTitle("Операции") }
-        items(breakdown.entries, key = { it.id }) { entry -> EntryRow(entry, state, { requestDelete(entry) }) }
+        item(key = "budget-detail:operations-heading") { SectionTitle("Операции") }
+        items(breakdown.entries, key = { financeItemKey("budget-entry", it.id) }) { entry -> EntryRow(entry, state, { requestDelete(entry) }) }
     }
 }
 
@@ -242,10 +242,10 @@ fun FinanceScreen(onBack: () -> Unit) {
     }
     if (state.accounts.isNotEmpty()) {
         item { SectionTitle("Счета") }
-        items(state.accounts, key = { it.id }) { AccountCard(it) }
+        items(state.accounts, key = { financeItemKey("overview-account", it.id) }) { AccountCard(it) }
         item { SectionTitle("Последние операции") }
         if (state.entries.isEmpty()) item { EmptyText("Операций пока нет") }
-        items(state.entries.take(5), key = { it.id }) { EntryRow(it, state) }
+        items(state.entries.take(5), key = { financeItemKey("overview-entry", it.id) }) { EntryRow(it, state) }
     }
 }
 
@@ -254,7 +254,7 @@ fun FinanceScreen(onBack: () -> Unit) {
 ) {
     item { SectionTitle("История") }
     if (state.entries.isEmpty()) item { EmptyText("Добавьте первую операцию кнопкой ниже") }
-    items(state.entries, key = { it.id }) { entry -> EntryRow(entry, state) { onDelete(entry) } }
+    items(state.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state) { onDelete(entry) } }
 }
 
 @Composable private fun Analytics(state: FinanceUiState) = LazyColumn(
@@ -371,14 +371,14 @@ fun FinanceScreen(onBack: () -> Unit) {
 private val categoryEmoji = listOf("🛒","🍔","☕","🏠","🚕","🚗","✈️","🎁","❤️","💊","🎮","📱","👕","💡","🎓","🐾","💰","💼","📈","🏷️")
 
 @Composable private fun EmojiPicker(selected: String, onSelect: (String) -> Unit) = Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-    categoryEmoji.chunked(5).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    fourColumnRows(categoryEmoji).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         row.forEach { emoji -> Surface(
             modifier = Modifier.weight(1f).clickable { onSelect(emoji) },
             shape = RoundedCornerShape(12.dp),
             color = if(selected == emoji) FffMint.copy(alpha=.22f) else FffSurface,
             border = androidx.compose.foundation.BorderStroke(1.dp, if(selected == emoji) FffMint else FffLine),
         ) { Text(emoji, fontSize=24.sp, modifier=Modifier.padding(vertical=8.dp), textAlign=androidx.compose.ui.text.style.TextAlign.Center) } }
-        repeat(5-row.size) { Spacer(Modifier.weight(1f)) }
+        repeat(4-row.size) { Spacer(Modifier.weight(1f)) }
     } }
 }
 

@@ -110,8 +110,12 @@ internal data class BudgetBreakdown(
     val categories: List<BudgetCategoryBreakdown>,
 )
 
+internal fun <T> fourColumnRows(items: List<T>): List<List<T>> = items.chunked(4)
+
+internal fun financeItemKey(domain: String, id: Long): String = "$domain:$id"
+
 internal fun categoryGridRows(categories: List<CategoryEntity>): List<List<CategoryEntity>> =
-    categories.chunked(4)
+    fourColumnRows(categories)
 
 internal fun budgetBreakdown(
     budgetId: Long,

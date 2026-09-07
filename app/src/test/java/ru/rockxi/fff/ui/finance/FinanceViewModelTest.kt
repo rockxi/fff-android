@@ -193,6 +193,27 @@ class FinanceViewModelTest {
         assertEquals(categories.map { it.id }, rows.flatten().map { it.id })
     }
 
+    @Test fun `emoji picker rows use the same four column contract`() {
+        val emoji = listOf("🛒", "🍔", "☕", "🏠", "🚕", "🚗", "✈️", "🎁", "❤️")
+        val rows = fourColumnRows(emoji)
+        assertEquals(listOf(4, 4, 1), rows.map { it.size })
+        assertEquals(emoji, rows.flatten())
+    }
+
+    @Test fun `lazy item keys stay unique when database tables share ids`() {
+        val categoryId = 7L
+        val entryId = 7L
+        val keys = listOf(
+            financeItemKey("budget-category", categoryId),
+            financeItemKey("budget-entry", entryId),
+            financeItemKey("overview-account", entryId),
+            financeItemKey("overview-entry", entryId),
+        )
+        assertEquals(keys.size, keys.toSet().size)
+        assertEquals("budget-category:7", financeItemKey("budget-category", categoryId))
+        assertEquals("budget-entry:7", financeItemKey("budget-entry", entryId))
+    }
+
     @Test fun `back is consumed only by an open budget detail`() {
         assertTrue(shouldCloseBudgetDetailsOnBack(isBudgetsTab = true, selectedBudgetId = 42))
         assertFalse(shouldCloseBudgetDetailsOnBack(isBudgetsTab = true, selectedBudgetId = null))

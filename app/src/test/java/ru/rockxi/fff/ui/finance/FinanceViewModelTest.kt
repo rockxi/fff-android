@@ -24,6 +24,10 @@ import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinanceViewModelTest {
+    @Test fun categoryEmojiCatalogHasAtLeastOneHundredDistinctChoices() {
+        assertTrue(categoryEmoji.size >= 100)
+        assertTrue(categoryEmoji.distinct().size >= 100)
+    }
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
@@ -33,6 +37,20 @@ class FinanceViewModelTest {
         assertEquals(0L, FinanceViewModel.parseMoney("0"))
         assertNull(FinanceViewModel.parseMoney("12.345"))
         assertNull(FinanceViewModel.parseMoney("abc"))
+    }
+
+    @Test fun `form validators match domain money name and currency basics`() {
+        assertEquals("Введите название", requiredNameError("  "))
+        assertNull(requiredNameError("Карта"))
+        assertNull(currencyFieldError(" rub "))
+        assertNotNull(currencyFieldError("RU"))
+        assertNotNull(currencyFieldError("ZZZ"))
+        assertNull(moneyFieldError("", allowBlank = true, allowZero = true))
+        assertNull(moneyFieldError("0", allowZero = true))
+        assertNotNull(moneyFieldError("0", allowZero = false))
+        assertNotNull(moneyFieldError("-1", allowZero = true))
+        assertNotNull(moneyFieldError("1.234", allowZero = false))
+        assertNull(moneyFieldError("1 250,50", allowZero = false))
     }
 
     @Test fun `create account refreshes state and reports success`() = runTest(dispatcher) {
@@ -46,6 +64,27 @@ class FinanceViewModelTest {
         assertEquals("Карта", model.state.value.accounts.single().name)
         assertEquals(10025L, model.state.value.accounts.single().balanceMinor)
         assertNull(model.state.value.error)
+    }
+
+    @Test fun `category update refreshes name emoji and budget while preserving kind`() = runTest(dispatcher) {
+        val original = CategoryEntity(9, "Еда", CategoryKind.EXPENSE, budgetId = 1, emoji = "🍔")
+        val store = FakeStore().apply {
+            categories += original
+            budgetList += BudgetEntity(2, "Ежедневные", "RUB")
+        }
+        val model = FinanceViewModel(store, dispatcher)
+        advanceUntilIdle()
+        var success: Boolean? = null
+
+        model.updateCategory(9, "Продукты", 2, "🛒") { success = it }
+        advanceUntilIdle()
+
+        assertEquals(true, success)
+        val updated = model.state.value.expenseCategories.single { it.id == 9L }
+        assertEquals("Продукты", updated.name)
+        assertEquals("🛒", updated.emoji)
+        assertEquals(2L, updated.budgetId)
+        assertEquals(CategoryKind.EXPENSE, updated.kind)
     }
 
     @Test fun `invalid operation stays local and exposes useful error`() = runTest(dispatcher) {
@@ -306,6 +345,7 @@ private class FakeStore : FinanceStore {
     override suspend fun allocate(budgetId:Long,month:YearMonth,amountMinor:Long){allocations[budgetId to month]=amountMinor}
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long { val id=(accounts.size+1).toLong(); accounts += AccountEntity(id,name,currency.uppercase(),initialBalanceMinor); return id }
     override suspend fun createCategory(name: String, kind: CategoryKind, budgetId:Long, emoji:String): Long { val id=(categories.size+1).toLong(); categories += CategoryEntity(id,name,kind,budgetId=budgetId,emoji=emoji); return id }
+    override suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) { val index=categories.indexOfFirst{it.id==id}; categories[index]=categories[index].copy(name=name,budgetId=budgetId,emoji=emoji) }
     override suspend fun archiveAccount(id: Long, archived:Boolean) { val i=accounts.indexOfFirst{it.id==id}; accounts[i]=accounts[i].copy(archived=archived) }
     override suspend fun archiveCategory(id: Long, archived:Boolean) { val i=categories.indexOfFirst{it.id==id}; categories[i]=categories[i].copy(archived=archived) }
     override suspend fun archiveBudget(id: Long, archived:Boolean) { val i=budgetList.indexOfFirst{it.id==id}; budgetList[i]=budgetList[i].copy(archived=archived) }

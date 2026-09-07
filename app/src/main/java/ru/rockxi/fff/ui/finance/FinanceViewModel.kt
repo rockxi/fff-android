@@ -29,6 +29,7 @@ import java.math.RoundingMode
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.ZoneId
+import java.util.Currency
 
 internal interface FinanceStore {
     suspend fun accounts(includeArchived: Boolean = false): List<AccountEntity>
@@ -41,6 +42,7 @@ internal interface FinanceStore {
     suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long)
     suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long
     suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long, emoji: String): Long
+    suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String)
     suspend fun archiveAccount(id: Long, archived: Boolean)
     suspend fun archiveCategory(id: Long, archived: Boolean)
     suspend fun archiveBudget(id: Long, archived: Boolean)
@@ -66,6 +68,7 @@ internal class RepositoryFinanceStore(private val repository: FinanceRepository)
     override suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long) = repository.allocate(budgetId, month, amountMinor)
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long) = repository.createAccount(name, currency, initialBalanceMinor)
     override suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long, emoji: String) = repository.createCategory(name, kind, budgetId, emoji)
+    override suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) = repository.updateCategory(id, name, budgetId, emoji)
     override suspend fun archiveAccount(id: Long, archived: Boolean) = repository.archiveAccount(id, archived)
     override suspend fun archiveCategory(id: Long, archived: Boolean) = repository.archiveCategory(id, archived)
     override suspend fun archiveBudget(id: Long, archived: Boolean) = repository.archiveBudget(id, archived)
@@ -113,6 +116,25 @@ internal data class BudgetBreakdown(
 internal fun <T> fourColumnRows(items: List<T>): List<List<T>> = items.chunked(4)
 
 internal fun financeItemKey(domain: String, id: Long): String = "$domain:$id"
+
+internal fun requiredNameError(value: String): String? =
+    if (value.isBlank()) "Введите название" else null
+
+internal fun currencyFieldError(value: String): String? {
+    val normalized = value.trim().uppercase()
+    return if (normalized.length == 3 && runCatching { Currency.getInstance(normalized) }.isSuccess) null
+    else "Укажите валюту: RUB, USD…"
+}
+
+internal fun moneyFieldError(value: String, allowBlank: Boolean = false, allowZero: Boolean): String? {
+    if (allowBlank && value.isBlank()) return null
+    val minor = FinanceViewModel.parseMoney(value) ?: return "Введите корректную сумму"
+    return when {
+        allowZero && minor < 0 -> "Сумма не может быть отрицательной"
+        !allowZero && minor <= 0 -> "Сумма должна быть больше нуля"
+        else -> null
+    }
+}
 
 internal fun categoryGridRows(categories: List<CategoryEntity>): List<List<CategoryEntity>> =
     fourColumnRows(categories)
@@ -233,6 +255,11 @@ internal class FinanceViewModel(
     fun createCategory(name: String, kind: CategoryKind, budgetId: Long?, emoji: String, done: (Boolean) -> Unit = {}) {
         if (budgetId == null) return invalid("Выберите бюджет", done)
         launchAction(done = done) { store.createCategory(name, kind, budgetId, emoji); reloadCurrentState() }
+    }
+
+    fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String, done: (Boolean) -> Unit = {}) {
+        if (budgetId == null) return invalid("Выберите бюджет", done)
+        launchAction(done = done) { store.updateCategory(id, name, budgetId, emoji); reloadCurrentState() }
     }
 
     fun createBudget(name: String, currency: String, done: (Boolean) -> Unit = {}) = launchAction(done = done) {

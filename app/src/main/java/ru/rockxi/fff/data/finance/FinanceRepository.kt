@@ -35,9 +35,26 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         require(name.isNotBlank()) { "Category name is required" }
         val selected = budgetId?.let { dao.budget(it) } ?: dao.budgetByName("Общие")
         requireNotNull(selected) { "Budget not found" }
+        require(!selected.archived) { "Нельзя выбрать архивный бюджет" }
         val normalizedEmoji = emoji.trim()
-        require(normalizedEmoji.isNotBlank() && normalizedEmoji.length <= 8) { "Выберите один смайлик" }
+        require(validEmoji(normalizedEmoji)) { "Выберите один смайлик" }
         return dao.insertCategory(CategoryEntity(name = name.trim(), kind = kind, budgetId = selected.id, emoji = normalizedEmoji))
+    }
+
+    suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) = database.withTransaction {
+        require(name.isNotBlank()) { "Введите название категории" }
+        val category = requireNotNull(dao.category(id)) { "Категория не найдена" }
+        require(!category.archived) { "Сначала верните категорию из архива" }
+        val budget = requireNotNull(dao.budget(budgetId)) { "Бюджет не найден" }
+        require(!budget.archived) { "Нельзя выбрать архивный бюджет" }
+        val normalizedEmoji = emoji.trim()
+        require(validEmoji(normalizedEmoji)) { "Выберите один смайлик" }
+        if (category.kind == CategoryKind.EXPENSE) {
+            require(dao.categoryExpenseCurrencies(id).all { it == budget.currency }) {
+                "Валюта нового бюджета не совпадает с валютой существующих расходов"
+            }
+        }
+        require(dao.updateCategory(id, name.trim(), budgetId, normalizedEmoji) == 1) { "Категория не найдена" }
     }
 
     suspend fun createBudget(name: String, currency: String): Long {
@@ -255,7 +272,19 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         return normalized
     }
 
-    private fun validEmoji(value: String): Boolean = value.trim().isNotBlank() && value.trim().length <= 8
+    private fun validEmoji(value: String): Boolean {
+        val codePoints = value.trim().codePoints().toArray()
+        if (codePoints.isEmpty() || codePoints.size > 12) return false
+        var hasEmoji = false
+        for (codePoint in codePoints) {
+            val emojiBase = codePoint in 0x1F000..0x1FAFF || codePoint in 0x2600..0x27BF ||
+                codePoint in 0x2300..0x23FF || codePoint in 0x2B00..0x2BFF || codePoint in 0x2190..0x21FF
+            val joinerOrStyle = codePoint == 0x200D || codePoint == 0xFE0F || codePoint == 0x20E3
+            if (!emojiBase && !joinerOrStyle) return false
+            hasEmoji = hasEmoji || emojiBase
+        }
+        return hasEmoji
+    }
     private fun parseCategoryKind(value: String) = runCatching { CategoryKind.valueOf(value) }
         .getOrElse { throw IllegalArgumentException("Некорректный тип категории в копии") }
     private fun parseEntryKind(value: String) = runCatching { EntryKind.valueOf(value) }

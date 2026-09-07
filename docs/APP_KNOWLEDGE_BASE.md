@@ -25,6 +25,8 @@ The database is `fff-finance.db` in application-private storage. Accounts hold t
 
 Archive is reversible and hides an object from normal pickers. Permanent deletion is explicit. Financial objects referenced by history must not disappear silently: delete the related operations first; deleting an operation reverses its balance effect transactionally.
 
+Categories have an emoji chosen from more than 150 distinct built-in choices. Active categories can be edited without changing their income/expense kind: name, emoji and budget are mutable. Moving an expense category with history is transactional and is accepted only when every linked expense account uses the destination budget currency. Archived budgets are never offered as edit targets.
+
 Backups are versioned JSON documents selected through Android Storage Access Framework. They contain all Finance tables, including archived objects and explicit IDs. Restore validates references and currencies, then replaces Finance data in one transaction. Backup jobs are serialized and their document streams are opened on the IO dispatcher; the UI prevents overlapping picker or backup operations. The file is user-controlled; no cloud storage is required.
 
 ## Harness
@@ -37,7 +39,7 @@ Remote Control is a catalog destination intended for SSH hosts, terminals and ag
 
 ## UI system
 
-Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent.
+Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and controls belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent. Finance text inputs expose focus, supporting and field-error states; custom single-choice rows and four-column emoji/category grids provide checked radio semantics and at least 48dp touch targets.
 
 ## Updates and releases
 

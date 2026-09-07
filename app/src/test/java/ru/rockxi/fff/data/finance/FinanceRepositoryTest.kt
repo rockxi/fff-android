@@ -44,6 +44,46 @@ class FinanceRepositoryTest {
         assertEquals(1, repo.categories(CategoryKind.EXPENSE, includeArchived = true).size)
     }
 
+    @Test fun categoryCanBeEditedAndExpenseHistoryProtectsBudgetCurrency() = runBlocking {
+        val rubBudget = repo.budgets().first { it.currency == "RUB" }
+        val otherRub = repo.createBudget("Другой", "RUB")
+        val usdBudget = repo.createBudget("USD budget", "USD")
+        val account = repo.createAccount("Cash", "RUB", 1_000)
+        val category = repo.createCategory("Food", CategoryKind.EXPENSE, rubBudget.id, "🍔")
+        repo.addExpense(account, category, 100)
+
+        repo.updateCategory(category, "Продукты", otherRub, "🛒")
+        assertEquals("Продукты", repo.categories(CategoryKind.EXPENSE).single { it.id == category }.name)
+        assertEquals("🛒", repo.categories(CategoryKind.EXPENSE).single { it.id == category }.emoji)
+        assertEquals(otherRub, repo.categories(CategoryKind.EXPENSE).single { it.id == category }.budgetId)
+        assertFails { repo.updateCategory(category, "Food", usdBudget, "🍜") }
+        val unchanged = repo.categories(CategoryKind.EXPENSE).single { it.id == category }
+        assertEquals(otherRub, unchanged.budgetId)
+        assertEquals("Продукты", unchanged.name)
+        assertEquals("🛒", unchanged.emoji)
+    }
+
+    @Test fun categoryEditRulesAllowSafeMovesAndRejectArchivedTargetsAndInvalidEmoji() = runBlocking {
+        val rub = repo.budgets().first()
+        val usd = repo.createBudget("USD", "USD")
+        val noHistory = repo.createCategory("Draft", CategoryKind.EXPENSE, rub.id, "📝")
+        repo.updateCategory(noHistory, "Travel", usd, "👨‍👩‍👧‍👦")
+        assertEquals(usd, repo.categories(CategoryKind.EXPENSE).single { it.id == noHistory }.budgetId)
+
+        val account = repo.createAccount("Cash", "RUB")
+        val income = repo.createCategory("Salary", CategoryKind.INCOME, rub.id, "💰")
+        repo.addIncome(account, income, 100)
+        repo.updateCategory(income, "Salary updated", usd, "💵")
+        assertEquals(usd, repo.categories(CategoryKind.INCOME).single { it.id == income }.budgetId)
+
+        repo.archiveBudget(rub.id)
+        assertFails { repo.createCategory("Blocked", CategoryKind.EXPENSE, rub.id, "🍔") }
+        assertFails { repo.updateCategory(noHistory, "Blocked", rub.id, "🍔") }
+        assertFails { repo.updateCategory(noHistory, "Bad emoji", usd, "text") }
+        repo.archiveCategory(noHistory)
+        assertFails { repo.updateCategory(noHistory, "Archived", usd, "🍜") }
+    }
+
     @Test fun freshDatabaseSeedsNamedRubBudgets() = runBlocking {
         assertEquals(listOf("Аринка", "Общие", "Ежедневные"), repo.budgets().map { it.name })
         assertTrue(repo.budgets().all { it.currency == "RUB" })

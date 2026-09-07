@@ -3,6 +3,8 @@ package ru.rockxi.fff.ui.finance
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,7 +41,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import ru.rockxi.fff.data.finance.*
-import ru.rockxi.fff.ui.components.FffModal
+import ru.rockxi.fff.ui.components.*
 import ru.rockxi.fff.ui.theme.*
 import java.math.BigDecimal
 import java.text.NumberFormat
@@ -60,6 +65,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     var dialog by remember { mutableStateOf<DialogKind?>(null) }
     var selectedBudgetId by remember { mutableStateOf<Long?>(null) }
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
+    var editingCategory by remember { mutableStateOf<CategoryEntity?>(null) }
     // Do not save a transient document grant across Activity recreation. If the
     // screen is recreated, the user selects the backup again instead of leaving
     // an invalid URI in saved state.
@@ -116,6 +122,7 @@ fun FinanceScreen(onBack: () -> Unit) {
                         archiveBudget = model::archiveBudget,
                         requestAccountDelete = { entity -> deleteRequest = DeleteRequest("Удалить счёт «${entity.name}»?", "Удалить можно только архивный счёт без операций.") { model.deleteAccount(entity.id) } },
                         requestCategoryDelete = { entity -> deleteRequest = DeleteRequest("Удалить категорию «${entity.name}»?", "Удалить можно только архивную категорию без операций.") { model.deleteCategory(entity.id) } },
+                        editCategory = { entity -> model.clearError(); editingCategory = entity },
                         requestBudgetDelete = { entity -> deleteRequest = DeleteRequest("Удалить бюджет «${entity.name}»?", "Удалить можно только архивный бюджет без категорий.") { model.deleteBudget(entity.id) } },
                         backupWorking = state.backupBusy || backupPickerInFlight,
                         exportBackup = {
@@ -167,6 +174,11 @@ fun FinanceScreen(onBack: () -> Unit) {
             destructive = true,
         ) {
             Text("Все текущие данные Finance будут заменены содержимым выбранной копии. Операцию нельзя отменить.", color = FffMuted, fontSize = 13.sp, lineHeight = 19.sp)
+        }
+    }
+    editingCategory?.let { category ->
+        EditCategoryDialog(state, category, { model.clearError(); editingCategory = null }) { name, budget, emoji ->
+            model.updateCategory(category.id, name, budget, emoji) { if (it) { model.clearError(); editingCategory = null } }
         }
     }
 }
@@ -278,6 +290,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     archiveBudget: (Long, Boolean) -> Unit,
     requestAccountDelete: (AccountEntity) -> Unit,
     requestCategoryDelete: (CategoryEntity) -> Unit,
+    editCategory: (CategoryEntity) -> Unit,
     requestBudgetDelete: (BudgetEntity) -> Unit,
     backupWorking: Boolean,
     exportBackup: () -> Unit,
@@ -290,7 +303,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     items(state.allAccounts, key = { "a${it.id}" }) { entity -> ManageRow(entity.name, "${entity.currency} · ${formatMoney(entity.balanceMinor, entity.currency)}", entity.archived, { archiveAccount(entity.id, !entity.archived) }, { requestAccountDelete(entity) }) }
     item { Spacer(Modifier.height(8.dp)); ManagementHeading("Категории", "Новая категория") { onAdd(DialogKind.CATEGORY) } }
     if (state.allCategories.isEmpty()) item { EmptyText("Категорий нет") }
-    items(state.allCategories, key = { "c${it.id}" }) { entity -> val budget=state.allBudgets.firstOrNull{it.id==entity.budgetId}?.name ?: "—"; ManageRow("${entity.emoji}  ${entity.name}", (if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход")+" · $budget", entity.archived, { archiveCategory(entity.id, !entity.archived) }, { requestCategoryDelete(entity) }) }
+    items(state.allCategories, key = { "c${it.id}" }) { entity -> val budget=state.allBudgets.firstOrNull{it.id==entity.budgetId}?.name ?: "—"; ManageRow("${entity.emoji}  ${entity.name}", (if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход")+" · $budget", entity.archived, { archiveCategory(entity.id, !entity.archived) }, { requestCategoryDelete(entity) }, { editCategory(entity) }) }
     item { Spacer(Modifier.height(8.dp)); ManagementHeading("Бюджеты", "Новый бюджет") { onAdd(DialogKind.BUDGET) } }
     items(state.allBudgets, key = { "b${it.id}" }) { entity -> ManageRow(entity.name, entity.currency, entity.archived, { archiveBudget(entity.id, !entity.archived) }, { requestBudgetDelete(entity) }) }
     item {
@@ -328,8 +341,9 @@ fun FinanceScreen(onBack: () -> Unit) {
         if(onDelete != null) IconButton(onClick=onDelete) { Icon(Icons.Rounded.DeleteOutline, "Удалить", tint=Color(0xFFFF7C9B)) }
     }
 }
-@Composable private fun ManageRow(name: String, meta: String, archived: Boolean, archive: () -> Unit, delete: () -> Unit) = Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(14.dp)).padding(10.dp), verticalAlignment=Alignment.CenterVertically) {
+@Composable private fun ManageRow(name: String, meta: String, archived: Boolean, archive: () -> Unit, delete: () -> Unit, edit: (() -> Unit)? = null) = Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(14.dp)).padding(10.dp), verticalAlignment=Alignment.CenterVertically) {
     Column(Modifier.weight(1f)) { Text(name, color=if(archived) FffMuted else FffText, maxLines=1, overflow=TextOverflow.Ellipsis); Text(if(archived) "$meta · В архиве" else meta, color=FffMuted, fontSize=11.sp) }
+    if(edit != null && !archived) IconButton(onClick=edit) { Icon(Icons.Rounded.Edit, "Редактировать") }
     TextButton(onClick=archive) { Text(if(archived) "Вернуть" else "В архив") }
     if(archived) IconButton(onClick=delete) { Icon(Icons.Rounded.DeleteForever, "Удалить навсегда", tint=Color(0xFFFF7C9B)) }
 }
@@ -341,59 +355,83 @@ fun FinanceScreen(onBack: () -> Unit) {
 @Composable private fun NoticeBanner(text: String, modifier: Modifier = Modifier) = Text(text,color=Color(0xFF07100D),fontSize=12.sp,modifier=modifier.fillMaxWidth().background(FffMint).padding(12.dp))
 
 @Composable private fun AccountDialog(error: String?, dismiss: () -> Unit, save: (String,String,String)->Unit) {
-    var name by remember { mutableStateOf("") }; var currency by remember { mutableStateOf("RUB") }; var balance by remember { mutableStateOf("") }
-    FormDialog("Новый счёт", error, dismiss, { save(name,currency,balance) }) { Field("Название",name){name=it}; Field("Валюта (RUB, USD…)",currency){currency=it}; Field("Начальный баланс",balance){balance=it} }
+    var name by remember { mutableStateOf("") }; var currency by remember { mutableStateOf("RUB") }; var balance by remember { mutableStateOf("") }; var submitted by remember { mutableStateOf(false) }
+    val nameError=if(submitted) requiredNameError(name) else null; val currencyError=if(submitted) currencyFieldError(currency) else null; val balanceError=if(submitted) moneyFieldError(balance,allowBlank=true,allowZero=true) else null
+    FormDialog("Новый счёт", error, dismiss, { submitted=true; if(requiredNameError(name)==null&&currencyFieldError(currency)==null&&moneyFieldError(balance,true,true)==null) save(name,currency,balance) }) { Field("Название",name,error=nameError){name=it}; Field("Валюта (RUB, USD…)",currency,FffInputKind.CURRENCY,"Три буквы, например RUB",currencyError){currency=it}; Field("Начальный баланс",balance,FffInputKind.MONEY,"Например: 1250,50",balanceError){balance=it} }
 }
 @Composable private fun CategoryDialog(state: FinanceUiState, dismiss: () -> Unit, save: (String,CategoryKind,Long?,String)->Unit) {
-    var name by remember { mutableStateOf("") }; var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }; var budget by remember { mutableStateOf<Long?>(null) }; var emoji by remember { mutableStateOf("🛒") }
-    FormDialog("Новая категория", state.error, dismiss, { save(name,kind,budget,emoji) }) { Field("Название",name){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it}; SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"}){budget=it} }
+    var name by remember { mutableStateOf("") }; var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }; var budget by remember { mutableStateOf<Long?>(null) }; var emoji by remember { mutableStateOf("🛒") }; var submitted by remember { mutableStateOf(false) }
+    val nameError=if(submitted) requiredNameError(name) else null; val budgetError=if(submitted&&budget==null) "Выберите бюджет" else null
+    FormDialog("Новая категория", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null&&budget!=null) save(name,kind,budget,emoji) }) { Field("Название",name,error=nameError){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it}; SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it} }
 }
-@Composable private fun BudgetDialog(error:String?,dismiss:()->Unit,save:(String,String)->Unit){var name by remember{mutableStateOf("")};var currency by remember{mutableStateOf("RUB")};FormDialog("Новый бюджет",error,dismiss,{save(name,currency)}){Field("Название",name){name=it};Field("Валюта",currency){currency=it}}}
-@Composable private fun AllocationDialog(state:FinanceUiState,dismiss:()->Unit,save:(Long?,String)->Unit){var budget by remember{mutableStateOf<Long?>(state.budgets.firstOrNull()?.id)};var amount by remember{mutableStateOf("")};FormDialog("Бюджет на месяц",state.error,dismiss,{save(budget,amount)}){SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"}){budget=it};Field("Сумма",amount){amount=it}}}
+@Composable private fun EditCategoryDialog(state: FinanceUiState, category: CategoryEntity, dismiss: () -> Unit, save: (String,Long?,String)->Unit) {
+    var name by remember(category.id) { mutableStateOf(category.name) }; var budget by remember(category.id) { mutableStateOf<Long?>(category.budgetId) }; var emoji by remember(category.id) { mutableStateOf(category.emoji) }; var submitted by remember(category.id) { mutableStateOf(false) }
+    val nameError=if(submitted) requiredNameError(name) else null; val budgetError=if(submitted&&budget==null) "Выберите бюджет" else null
+    FormDialog("Редактировать категорию", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null&&budget!=null) save(name,budget,emoji) }) {
+        Field("Название",name,error=nameError){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}
+        Text(if(category.kind == CategoryKind.EXPENSE) "Категория расходов" else "Категория доходов", color=FffMuted, fontSize=12.sp)
+        SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it}
+    }
+}
+@Composable private fun BudgetDialog(error:String?,dismiss:()->Unit,save:(String,String)->Unit){var name by remember{mutableStateOf("")};var currency by remember{mutableStateOf("RUB")};var submitted by remember{mutableStateOf(false)};val nameError=if(submitted) requiredNameError(name) else null;val currencyError=if(submitted) currencyFieldError(currency) else null;FormDialog("Новый бюджет",error,dismiss,{submitted=true;if(requiredNameError(name)==null&&currencyFieldError(currency)==null)save(name,currency)}){Field("Название",name,error=nameError){name=it};Field("Валюта",currency,FffInputKind.CURRENCY,"Три буквы, например RUB",currencyError){currency=it}}}
+@Composable private fun AllocationDialog(state:FinanceUiState,dismiss:()->Unit,save:(Long?,String)->Unit){var budget by remember{mutableStateOf<Long?>(state.budgets.firstOrNull()?.id)};var amount by remember{mutableStateOf("")};var submitted by remember{mutableStateOf(false)};val budgetError=if(submitted&&budget==null)"Выберите бюджет" else null;val amountError=if(submitted)moneyFieldError(amount,allowZero=true) else null;FormDialog("Бюджет на месяц",state.error,dismiss,{submitted=true;if(budget!=null&&moneyFieldError(amount,allowZero=true)==null)save(budget,amount)}){SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it};Field("Сумма",amount,FffInputKind.MONEY,"Например: 25000",amountError){amount=it}}}
 @Composable private fun EntryDialog(state: FinanceUiState, dismiss: () -> Unit, save:(EntryKind,String,Long?,Long?,Long?,String)->Unit) {
     val allowed = availableEntryKinds(state)
     var form by remember { mutableStateOf(OperationFormState(kind = allowed.firstOrNull() ?: EntryKind.EXPENSE, accountId = state.accounts.firstOrNull()?.id)) }; var amount by remember { mutableStateOf("") }; var note by remember { mutableStateOf("") }
-    val cats = form.categories(state)
-    FormDialog("Новая операция",state.error,dismiss,{save(form.kind,amount,form.accountId,form.categoryId,form.targetAccountId,note)}) {
+    val cats = form.categories(state); var submitted by remember { mutableStateOf(false) }
+    val amountError=if(submitted)moneyFieldError(amount,allowZero=false) else null;val accountError=if(submitted&&form.accountId==null)"Выберите счёт" else null;val categoryError=if(submitted&&form.kind!=EntryKind.TRANSFER&&form.categoryId==null)"Выберите категорию" else null;val targetError=if(submitted&&form.kind==EntryKind.TRANSFER&&form.targetAccountId==null)"Выберите счёт назначения" else null
+    FormDialog("Новая операция",state.error,dismiss,{submitted=true;if(moneyFieldError(amount,allowZero=false)==null&&form.accountId!=null&&(form.kind==EntryKind.TRANSFER&&form.targetAccountId!=null||form.kind!=EntryKind.TRANSFER&&form.categoryId!=null))save(form.kind,amount,form.accountId,form.categoryId,form.targetAccountId,note)}) {
         ChoiceRow(listOf("Расход" to EntryKind.EXPENSE,"Доход" to EntryKind.INCOME,"Перевод" to EntryKind.TRANSFER).filter { it.second in allowed },form.kind){form=form.selectKind(it)}
-        Field("Сумма",amount){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name}){form=form.selectSource(it,state)}
-        if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name}){form=form.copy(targetAccountId=it)}
-        else CategoryTiles(cats, form.categoryId) { form=form.copy(categoryId=it) }
+        Field("Сумма",amount,FffInputKind.MONEY,"Например: 1250,50",amountError){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name},accountError){form=form.selectSource(it,state)}
+        if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name},targetError){form=form.copy(targetAccountId=it)}
+        else CategoryTiles(cats, form.categoryId, categoryError) { form=form.copy(categoryId=it) }
         Field("Комментарий (необязательно)",note){note=it}
     }
 }
 
 @Composable private fun FormDialog(title:String,error:String?,dismiss:()->Unit,save:()->Unit,content:@Composable ColumnScope.()->Unit)=FffModal(title,dismiss,"Сохранить",save) { Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)){content(); if(error!=null) Text(error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)} }
-@Composable private fun Field(label:String,value:String,onChange:(String)->Unit)=OutlinedTextField(value,onChange,Modifier.fillMaxWidth(),label={Text(label)},singleLine=true)
-@Composable private fun <T> ChoiceRow(values:List<Pair<String,T>>,selected:T,onSelect:(T)->Unit)=Column(verticalArrangement=Arrangement.spacedBy(6.dp)){values.forEach{(label,value)->Row(Modifier.fillMaxWidth().clickable{onSelect(value)}.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){RadioButton(selected==value,{onSelect(value)});Text(label)}}}
-@Composable private fun <T> SelectList(label:String, values:List<T>, selected:Long?, id:(T)->Long, name:(T)->String, select:(Long)->Unit)=Column{Text(label,color=FffMuted,fontSize=12.sp); if(values.isEmpty()) Text("Нет доступных вариантов",color=Color(0xFFFF7C9B),fontSize=12.sp) else values.forEach{v->Row(Modifier.fillMaxWidth().clickable{select(id(v))}.padding(vertical=2.dp),verticalAlignment=Alignment.CenterVertically){RadioButton(selected==id(v),{select(id(v))});Text(name(v),maxLines=1,overflow=TextOverflow.Ellipsis)}}}
+@Composable private fun Field(label:String,value:String,kind:FffInputKind=FffInputKind.TEXT,support:String?=null,error:String?=null,onChange:(String)->Unit)=FffTextInput(label,value,onChange,kind=kind,supportingText=support,error=error)
+@Composable private fun <T> ChoiceRow(values:List<Pair<String,T>>,selected:T,onSelect:(T)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){values.forEach{(label,value)->FffChoiceRow(selected==value,{onSelect(value)},label)}}
+@Composable private fun <T> SelectList(label:String, values:List<T>, selected:Long?, id:(T)->Long, name:(T)->String,error:String?=null,select:(Long)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,color=if(error==null)FffMuted else Color(0xFFFF7C9B),fontSize=12.sp); if(values.isEmpty()) Text("Нет доступных вариантов",color=Color(0xFFFF7C9B),fontSize=12.sp) else values.forEach{v->FffChoiceRow(selected==id(v),{select(id(v))},name(v))};error?.let{Text(it,color=Color(0xFFFF7C9B),fontSize=12.sp)}}
 
-private val categoryEmoji = listOf("🛒","🍔","☕","🏠","🚕","🚗","✈️","🎁","❤️","💊","🎮","📱","👕","💡","🎓","🐾","💰","💼","📈","🏷️")
+internal val categoryEmoji = listOf(
+    "🛒","🛍️","🧺","🍔","🍕","🍣","🍜","🥗","🍎","🥐","🍰","🍫","☕","🍵","🍺","🍷",
+    "🏠","🏢","🏡","🛋️","🛏️","🧹","🧼","🔧","🔨","💡","🚿","🪴","🔑","📦","🧾","🏷️",
+    "🚕","🚗","🚌","🚇","🚲","🛴","🏍️","⛽","🅿️","✈️","🚆","🚢","🧳","🗺️","🏖️","🏕️",
+    "🎁","❤️","💐","💍","👶","🧸","🐾","🐶","🐱","🎉","🎂","🥳","👨‍👩‍👧‍👦","🤝","💌","🌟",
+    "💊","🩺","🏥","🦷","👓","🧘","🏋️","🏃","🚴","⚽","🏀","🎾","🏊","💆","🧴","🩹",
+    "🎮","🎬","🎵","🎧","📚","🎨","📷","🎭","🎟️","🧩","🎲","📰","📺","🎤","🎸","🏆",
+    "📱","💻","⌨️","🖥️","🖨️","📡","🌐","🔌","🔋","💾","🛠️","🤖","📺","⌚","🎙️","☁️",
+    "👕","👖","👗","👟","🧥","👜","💄","💇","✂️","🧵","🧶","👒","⌚","💍","🕶️","👔",
+    "🎓","🏫","✏️","📝","📖","🔬","🧪","📐","🧠","🌍","🗣️","📊","📌","🗂️","✅","💡",
+    "💰","💵","💳","🏦","📈","📉","💼","🪙","🧮","🧾","💸","💎","🤝","🏧","🤑","⚖️",
+)
 
-@Composable private fun EmojiPicker(selected: String, onSelect: (String) -> Unit) = Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+@Composable private fun EmojiPicker(selected: String, onSelect: (String) -> Unit) = Column(Modifier.selectableGroup(),verticalArrangement = Arrangement.spacedBy(6.dp)) {
     fourColumnRows(categoryEmoji).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         row.forEach { emoji -> Surface(
-            modifier = Modifier.weight(1f).clickable { onSelect(emoji) },
+            modifier = Modifier.weight(1f).heightIn(min=56.dp).semantics { contentDescription = "Смайлик $emoji" }.selectable(selected=selected==emoji,role=Role.RadioButton,onClick={onSelect(emoji)}),
             shape = RoundedCornerShape(12.dp),
             color = if(selected == emoji) FffMint.copy(alpha=.22f) else FffSurface,
             border = androidx.compose.foundation.BorderStroke(1.dp, if(selected == emoji) FffMint else FffLine),
-        ) { Text(emoji, fontSize=24.sp, modifier=Modifier.padding(vertical=8.dp), textAlign=androidx.compose.ui.text.style.TextAlign.Center) } }
+        ) { Box(contentAlignment=Alignment.Center) { Text(emoji, fontSize=24.sp, modifier=Modifier.padding(vertical=12.dp), textAlign=androidx.compose.ui.text.style.TextAlign.Center); FffSelectionBadge(selected==emoji,if(selected==emoji) "$emoji выбрано" else "$emoji не выбрано",Modifier.align(Alignment.TopEnd).padding(3.dp).size(20.dp)) } } }
         repeat(4-row.size) { Spacer(Modifier.weight(1f)) }
     } }
 }
 
-@Composable private fun CategoryTiles(categories: List<CategoryEntity>, selected: Long?, onSelect: (Long) -> Unit) = Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+@Composable private fun CategoryTiles(categories: List<CategoryEntity>, selected: Long?, error:String?=null,onSelect: (Long) -> Unit) = Column(Modifier.selectableGroup(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text("Категория", color=FffMuted, fontSize=12.sp)
     if(categories.isEmpty()) Text("Нет доступных категорий", color=Color(0xFFFF7C9B), fontSize=12.sp)
     categoryGridRows(categories).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(7.dp)) {
         row.forEach { category -> Surface(
-            modifier=Modifier.weight(1f).clickable { onSelect(category.id) },
+            modifier=Modifier.weight(1f).heightIn(min=80.dp).semantics { contentDescription = "Категория ${category.name}" }.selectable(selected=selected==category.id,role=Role.RadioButton,onClick={onSelect(category.id)}),
             shape=RoundedCornerShape(14.dp),
             color=if(selected==category.id) FffMint.copy(alpha=.18f) else FffSurface,
             border=androidx.compose.foundation.BorderStroke(1.dp, if(selected==category.id) FffMint else FffLine),
-        ) { Column(Modifier.padding(horizontal=4.dp, vertical=10.dp), horizontalAlignment=Alignment.CenterHorizontally) { Text(category.emoji,fontSize=30.sp);Text(category.name,fontSize=10.sp,maxLines=2,overflow=TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center,modifier=Modifier.padding(top=4.dp)) } } }
+        ) { Box { Column(Modifier.fillMaxWidth().padding(horizontal=4.dp, vertical=10.dp), horizontalAlignment=Alignment.CenterHorizontally) { Text(category.emoji,fontSize=30.sp);Text(category.name,fontSize=10.sp,maxLines=2,overflow=TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center,modifier=Modifier.padding(top=4.dp)) }; FffSelectionBadge(selected==category.id,if(selected==category.id) "${category.name} выбрано" else "${category.name} не выбрано",Modifier.align(Alignment.TopEnd).padding(3.dp).size(20.dp)) } } }
         repeat(4-row.size) { Spacer(Modifier.weight(1f)) }
     } }
+    error?.let { Text(it,color=Color(0xFFFF7C9B),fontSize=12.sp) }
 }
 
 private fun formatMoney(minor:Long,currencyCode:String="RUB"):String = runCatching { NumberFormat.getCurrencyInstance(Locale("ru","RU")).apply { currency=Currency.getInstance(currencyCode) }.format(BigDecimal.valueOf(minor,2)) }.getOrElse { "%.2f %s".format(minor/100.0,currencyCode) }

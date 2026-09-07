@@ -18,7 +18,8 @@ class GitHubReleaseParserTest {
               "prerelease": false,
               "assets": [
                 {"name": "checksums.txt", "browser_download_url": "https://github.com/rockxi/fff-android/releases/download/v0.2.0/checksums.txt"},
-                {"name": "fff-0.2.0.apk", "browser_download_url": "https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-0.2.0.apk"}
+                {"name": "fff-v0.2.0.apk", "browser_download_url": "https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-v0.2.0.apk"},
+                {"name": "fff-v0.2.0.apk.sha256", "browser_download_url": "https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-v0.2.0.apk.sha256"}
               ]
             }
             """.trimIndent(),
@@ -26,9 +27,10 @@ class GitHubReleaseParserTest {
 
         assertEquals(SemVer(0, 2, 0), release.version)
         assertEquals(
-            "https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-0.2.0.apk",
+            "https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-v0.2.0.apk",
             release.apkUrl,
         )
+        assertEquals("https://github.com/rockxi/fff-android/releases/download/v0.2.0/fff-v0.2.0.apk.sha256",release.checksumUrl)
     }
 
     @Test

@@ -6,9 +6,10 @@ device in SQLite through Room; no account or remote database is required.
 ## Install
 
 Download the signed APK from [GitHub Releases](https://github.com/rockxi/fff-android/releases).
-The app checks the latest GitHub release and offers to open its download page when
-a newer semantic version is available. Existing data remains local during an
-in-place update.
+With your consent, the app checks the latest GitHub release and asks before it
+downloads the signed APK. It verifies the published SHA-256 checksum and opens the
+Android package installer directly, without sending you to a browser. Existing data
+remains local during an in-place update.
 
 ## Applications
 

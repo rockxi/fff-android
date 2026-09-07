@@ -13,6 +13,7 @@ data class GitHubRelease(
     val version: SemVer,
     val releaseUrl: String,
     val apkUrl: String?,
+    val checksumUrl: String? = null,
 )
 
 object GitHubReleaseParser {
@@ -28,29 +29,15 @@ object GitHubReleaseParser {
         val releaseUrl = root["html_url"]?.jsonPrimitive?.contentOrNull
             ?.takeIf { GitHubReleaseUrlPolicy.isReleasePage(it, tagName) }
             ?: return null
-        val apkUrl = root["assets"]
+        val assets = root["assets"]
             ?.runCatching { jsonArray }
             ?.getOrNull()
-            ?.asSequence()
-            ?.mapNotNull { asset ->
-                runCatching {
-                    val item = asset.jsonObject
-                    val name = item["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                    val url = item["browser_download_url"]?.jsonPrimitive?.contentOrNull
-                    if (
-                        name.endsWith(".apk", ignoreCase = true) &&
-                        url != null &&
-                        GitHubReleaseUrlPolicy.isApkDownload(url, tagName, name)
-                    ) {
-                        url
-                    } else {
-                        null
-                    }
-                }.getOrNull()
-            }
-            ?.firstOrNull()
+        fun assetUrl(expected: String) = assets?.asSequence()?.mapNotNull { asset -> runCatching { val item=asset.jsonObject;val name=item["name"]?.jsonPrimitive?.contentOrNull;val url=item["browser_download_url"]?.jsonPrimitive?.contentOrNull;if(name==expected&&url!=null&&GitHubReleaseUrlPolicy.isAssetDownload(url,tagName,expected))url else null }.getOrNull() }?.firstOrNull()
+        val apkName = GitHubReleaseUrlPolicy.apkName(tagName)
+        val apkUrl = assetUrl(apkName)
+        val checksumUrl = assetUrl("$apkName.sha256")
 
-        return GitHubRelease(tagName, version, releaseUrl, apkUrl)
+        return GitHubRelease(tagName, version, releaseUrl, apkUrl, checksumUrl)
     }
 }
 
@@ -64,10 +51,16 @@ object GitHubReleaseUrlPolicy {
     }
 
     fun isApkDownload(url: String, tagName: String, assetName: String): Boolean {
-        if (!SAFE_APK_NAME.matches(assetName)) return false
+        if (assetName != apkName(tagName)) return false
+        return isAssetDownload(url, tagName, assetName)
+    }
+
+    fun isAssetDownload(url: String, tagName: String, assetName: String): Boolean {
+        if (!SAFE_ASSET_NAME.matches(assetName)) return false
         val uri = canonicalGitHubUri(url) ?: return false
         return uri.rawPath == "/$OWNER/$REPOSITORY/releases/download/$tagName/$assetName"
     }
+    fun apkName(tagName: String) = "fff-$tagName.apk"
 
     private fun canonicalGitHubUri(url: String): URI? {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
@@ -76,5 +69,5 @@ object GitHubReleaseUrlPolicy {
         return uri
     }
 
-    private val SAFE_APK_NAME = Regex("[A-Za-z0-9._-]+\\.[aA][pP][kK]")
+    private val SAFE_ASSET_NAME = Regex("[A-Za-z0-9._-]+")
 }

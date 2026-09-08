@@ -15,6 +15,7 @@ import androidx.navigation.compose.rememberNavController
 import ru.rockxi.fff.navigation.Destination
 import ru.rockxi.fff.ui.finance.FinanceScreen
 import ru.rockxi.fff.ui.harness.HarnessScreen
+import ru.rockxi.fff.ui.remote.RemoteScreen
 
 @Composable
 fun FffApp() {
@@ -30,12 +31,7 @@ fun FffApp() {
                 FinanceScreen(onBack = navController::popBackStack)
             }
             composable(Destination.RemoteControl.route) {
-                ModulePlaceholder(
-                    kicker = "INFRASTRUCTURE",
-                    title = "Remote Control",
-                    description = "Подключения к хостам и защищённые терминальные сессии.",
-                    onBack = navController::popBackStack,
-                )
+                RemoteScreen(onBack = navController::popBackStack)
             }
             composable(Destination.Harness.route) { HarnessScreen(onBack = navController::popBackStack) }
         }

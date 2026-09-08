@@ -6,7 +6,7 @@ FFF is the main native Android application and launcher. It presents a catalog o
 
 - **Finance** — local-first personal finance, accounts, categories, operations and monthly budgets.
 - **Harness** — authenticated native client for the same AI agent and conversation used by the Telegram bot.
-- **Remote Control** — host/terminal control entry. Its richer remote-control implementation is still evolving.
+- **Remote Control** — SSH host management, non-interactive terminal commands and background Codex CLI sessions.
 
 The Android package is `ru.rockxi.fff`. Navigation starts in `ui/FffApp.kt`; catalog metadata lives in `model/FffApplication.kt`; destinations live in `navigation/Destination.kt`.
 
@@ -35,7 +35,27 @@ Harness code is in `data/harness` and `ui/harness`. A short pairing code is appr
 
 ## Remote Control
 
-Remote Control is a catalog destination intended for SSH hosts, terminals and agent sessions. Keep host credentials out of the repository and Android backups unless an explicit encrypted storage design is implemented.
+Remote Control is a native phone-first client for owner-scoped SSH hosts, one-shot terminal commands and durable background Codex CLI sessions. It reuses the encrypted Harness pairing bearer token, loads hosts and sessions from the server whenever its ViewModel is created, and polls only the currently opened session output. Passwords, private keys and passphrases remain transient form state: they are sent to the backend when a host is created and are never persisted in Android preferences, databases or backups. Host profiles can currently be created and deleted; editing is not exposed because the server API has no edit route.
+
+Remote commands accept a maximum 120-second execution timeout. A ProxyJump connection can perform two sequential 20-second connects and two 20-second logins before execution, followed by up to 5 seconds of termination cleanup. The HTTP chain therefore waits 230 seconds in the server-side web proxy and 240 seconds in Android. Ordinary host/session metadata and session-launch requests retain their short 15-second client deadline. Ordinary remote responses remain capped at 512 KiB; command responses alone allow 4 MiB so the backend's legal 256,000-character output still fits when aiohttp ASCII-escapes every non-BMP code point as a 12-byte surrogate pair.
+
+The backend encrypts SSH passwords, private keys and passphrases with AES-GCM.
+`REMOTE_ENCRYPTION_KEY` should be an independent random value of at least 32
+characters; when absent, the backend falls back to `MINIAPP_ENCRYPTION_KEY` for
+compatibility. Losing or rotating that key without migrating ciphertext makes
+saved credentials unusable. Neither key nor SSH credentials belong in Git.
+
+The paired Harness bearer token is an owner-level capability for every configured
+host, and commands execute with the selected Unix account's privileges. Deployers
+must apply least privilege and maintain trusted SSH `known_hosts` for the backend;
+the Android client does not provide host-key enrollment or an interactive TTY.
+Sessions are background work relative to the phone UI, not durable external jobs:
+backend restart terminates the SSH process and stale active records become
+`interrupted`. Retained output is capped at the latest 2,000,000 characters.
+
+The AI Harness exposes host listing and SSH command tools. Command execution is
+allowed only for an explicit user request and at most once per agent turn. Remote
+stdout/stderr is wrapped and treated as untrusted data, never as agent instructions.
 
 ## UI system
 

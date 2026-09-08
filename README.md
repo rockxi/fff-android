@@ -30,11 +30,23 @@ remains local during an in-place update.
   Telegram AI topic. The bearer credential is encrypted with Android Keystore.
   Unpairing durably revokes it, and the app returns to pairing if the server reports
   that the session has expired.
+- **Remote Control** uses the same paired Harness credential to manage owner-scoped
+  SSH profiles with password or private-key authentication and an optional single
+  ProxyJump. It runs non-interactive terminal commands and starts background
+  `codex exec --json` sessions whose status and retained output can be revisited
+  from the app. Credentials are submitted once and are not stored on the phone.
+
+Remote Control grants the paired device the authority of the configured remote
+Unix accounts. Prefer dedicated least-privilege accounts and trusted server host
+keys. Host-key enrollment/confirmation and interactive TTY programs are not
+available in the Android UI. Codex jobs continue while the screen is closed, but
+the backend is the job supervisor: restarting it interrupts active jobs and marks
+their durable session records as `interrupted`.
 
 ## Build
 
 ```bash
-./gradlew testDebugUnitTest assembleDebug
+./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.

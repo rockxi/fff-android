@@ -29,6 +29,7 @@ import java.math.RoundingMode
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.ZoneId
+import java.time.LocalDate
 import java.util.Currency
 
 internal interface FinanceStore {
@@ -112,6 +113,38 @@ internal data class BudgetBreakdown(
     val entries: List<LedgerEntryEntity>,
     val categories: List<BudgetCategoryBreakdown>,
 )
+
+internal data class OperationDayGroup(
+    val date: LocalDate,
+    val entries: List<LedgerEntryEntity>,
+)
+
+internal data class OperationsTimeline(
+    val days: List<OperationDayGroup>,
+    val todayExpenseMinorByCurrency: Map<String, Long>,
+)
+
+internal fun operationsTimeline(
+    entries: List<LedgerEntryEntity>,
+    accounts: List<AccountEntity>,
+    zone: ZoneId = ZoneId.systemDefault(),
+    today: LocalDate = LocalDate.now(zone),
+): OperationsTimeline {
+    val accountsById = accounts.associateBy { it.id }
+    val sorted = entries.sortedWith(compareByDescending<LedgerEntryEntity> { it.occurredAt }.thenByDescending { it.id })
+    val days = sorted.groupBy { java.time.Instant.ofEpochMilli(it.occurredAt).atZone(zone).toLocalDate() }
+        .map { (date, values) -> OperationDayGroup(date, values) }
+        .sortedByDescending { it.date }
+    val currencies = accounts.map { it.currency }.distinct().sorted()
+    val totals = currencies.associateWith { currency ->
+        sorted.asSequence().filter {
+            it.kind == EntryKind.EXPENSE &&
+                accountsById[it.accountId]?.currency == currency &&
+                java.time.Instant.ofEpochMilli(it.occurredAt).atZone(zone).toLocalDate() == today
+        }.map { it.amountMinor }.fold(0L, ::saturatedAdd)
+    }
+    return OperationsTimeline(days, totals)
+}
 
 internal fun <T> fourColumnRows(items: List<T>): List<List<T>> = items.chunked(4)
 

@@ -28,6 +28,26 @@ class FinanceViewModelTest {
         assertTrue(categoryEmoji.size >= 100)
         assertTrue(categoryEmoji.distinct().size >= 100)
     }
+
+    @Test fun `operations timeline groups local days and totals only today expenses per currency`() {
+        val zone = ZoneId.of("Europe/Moscow")
+        val today = java.time.LocalDate.of(2026, 9, 8)
+        fun at(day: java.time.LocalDate, hour: Int) = day.atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
+        val accounts = listOf(AccountEntity(1, "RUB", "RUB"), AccountEntity(2, "USD", "USD"))
+        val entries = listOf(
+            LedgerEntryEntity(1, EntryKind.EXPENSE, 500, 1, categoryId = 1, occurredAt = at(today, 1)),
+            LedgerEntryEntity(2, EntryKind.INCOME, 9_999, 1, categoryId = 2, occurredAt = at(today, 2)),
+            LedgerEntryEntity(3, EntryKind.EXPENSE, 700, 1, categoryId = 1, occurredAt = at(today, 23)),
+            LedgerEntryEntity(4, EntryKind.EXPENSE, 250, 2, categoryId = 1, occurredAt = at(today, 12)),
+            LedgerEntryEntity(5, EntryKind.EXPENSE, 1_000, 1, categoryId = 1, occurredAt = at(today.minusDays(1), 23)),
+        )
+
+        val timeline = operationsTimeline(entries, accounts, zone, today)
+
+        assertEquals(listOf(today, today.minusDays(1)), timeline.days.map { it.date })
+        assertEquals(listOf(3L, 4L, 2L, 1L), timeline.days.first().entries.map { it.id })
+        assertEquals(mapOf("RUB" to 1_200L, "USD" to 250L), timeline.todayExpenseMinorByCurrency)
+    }
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }

@@ -21,6 +21,8 @@ remains local during an in-place update.
   deleting an operation reverses its balance effect. Versioned local JSON backups
   can be exported and restored through Android's document picker. Every category
   belongs to one budget; expense accounts and budgets must use the same currency.
+  Operations are grouped by local calendar day and today's expenses are summarized
+  separately for every currency.
   Finance forms use cohesive dark, accessible controls with explicit selected and
   validation states, phone-sized touch targets and keyboard-aware scrolling.
 - **AI Harness** is the native chat for the FFF assistant. Pair the device with the

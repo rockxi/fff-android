@@ -40,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.delay
 import ru.rockxi.fff.data.finance.*
 import ru.rockxi.fff.ui.components.*
 import ru.rockxi.fff.ui.theme.*
@@ -261,12 +262,43 @@ fun FinanceScreen(onBack: () -> Unit) {
     }
 }
 
-@Composable private fun Operations(state: FinanceUiState, onDelete: (LedgerEntryEntity) -> Unit) = LazyColumn(
-    Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 92.dp), verticalArrangement = Arrangement.spacedBy(9.dp),
-) {
-    item { SectionTitle("История") }
-    if (state.entries.isEmpty()) item { EmptyText("Добавьте первую операцию кнопкой ниже") }
-    items(state.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state) { onDelete(entry) } }
+@Composable private fun Operations(state: FinanceUiState, onDelete: (LedgerEntryEntity) -> Unit) {
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    var today by remember(zone) { mutableStateOf(java.time.LocalDate.now(zone)) }
+    LaunchedEffect(zone) {
+        while (true) {
+            delay(30_000)
+            today = java.time.LocalDate.now(zone)
+        }
+    }
+    val timeline = remember(state.entries, state.allAccounts, today, zone) { operationsTimeline(state.entries, state.allAccounts, zone, today) }
+    LazyColumn(
+        Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 92.dp), verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        item(key = "operations-today-title") { SectionTitle("Сегодня") }
+        if (timeline.todayExpenseMinorByCurrency.isEmpty()) {
+            item(key = "operations-today-empty") { EmptyText("Нет счетов для подсчёта") }
+        } else {
+            items(timeline.todayExpenseMinorByCurrency.entries.toList(), key = { "operations-today:${it.key}" }) { (currency, amount) ->
+                MetricCard("РАСХОДЫ СЕГОДНЯ · $currency", formatMoney(amount, currency), Color(0xFFFF7C9B))
+            }
+        }
+        item(key = "operations-history-title") { SectionTitle("История по дням") }
+        if (timeline.days.isEmpty()) item(key = "operations-empty") { EmptyText("Добавьте первую операцию кнопкой ниже") }
+        timeline.days.forEach { day ->
+            item(key = "operation-day:${day.date}") { DayHeading(day.date, today) }
+            items(day.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state, { onDelete(entry) }, showDate = false) }
+        }
+    }
+}
+
+@Composable private fun DayHeading(date: java.time.LocalDate, today: java.time.LocalDate) {
+    val title = when (date) {
+        today -> "Сегодня"
+        today.minusDays(1) -> "Вчера"
+        else -> date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("ru")))
+    }
+    Text(title.replaceFirstChar { it.uppercase() }, color = FffMint, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 7.dp, bottom = 1.dp))
 }
 
 @Composable private fun Analytics(state: FinanceUiState) = LazyColumn(
@@ -331,12 +363,13 @@ fun FinanceScreen(onBack: () -> Unit) {
 @Composable private fun AccountCard(a: AccountEntity) = Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(15.dp)).border(1.dp, FffLine, RoundedCornerShape(15.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
     Icon(Icons.Rounded.CreditCard, null, tint = FffMint); Column(Modifier.padding(start=12.dp).weight(1f)) { Text(a.name, fontWeight=FontWeight.SemiBold, maxLines=1, overflow=TextOverflow.Ellipsis); Text(a.currency, color=FffMuted, fontSize=11.sp) }; Text(formatMoney(a.balanceMinor, a.currency), fontWeight=FontWeight.Bold)
 }
-@Composable private fun EntryRow(e: LedgerEntryEntity, state: FinanceUiState, onDelete: (() -> Unit)? = null) {
+@Composable private fun EntryRow(e: LedgerEntryEntity, state: FinanceUiState, onDelete: (() -> Unit)? = null, showDate: Boolean = true) {
     val color = when(e.kind) { EntryKind.INCOME -> FffMint; EntryKind.EXPENSE -> Color(0xFFFF7C9B); EntryKind.TRANSFER -> FffViolet }
     val title = when(e.kind) { EntryKind.TRANSFER -> "Перевод"; else -> state.allCategories.firstOrNull { it.id == e.categoryId }?.name ?: if(e.kind == EntryKind.INCOME) "Доход" else "Расход" }
     val currency = state.allAccounts.firstOrNull { it.id == e.accountId }?.currency ?: "RUB"
     Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(14.dp)).padding(14.dp), verticalAlignment=Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title, maxLines=1, overflow=TextOverflow.Ellipsis); Text(SimpleDateFormat("dd MMM, HH:mm", Locale("ru")).format(Date(e.occurredAt)) + if(e.note.isBlank()) "" else " · ${e.note}", color=FffMuted, fontSize=11.sp, maxLines=1, overflow=TextOverflow.Ellipsis) }
+        val pattern = if(showDate) "dd MMM, HH:mm" else "HH:mm"
+        Column(Modifier.weight(1f)) { Text(title, maxLines=1, overflow=TextOverflow.Ellipsis); Text(SimpleDateFormat(pattern, Locale("ru")).format(Date(e.occurredAt)) + if(e.note.isBlank()) "" else " · ${e.note}", color=FffMuted, fontSize=11.sp, maxLines=1, overflow=TextOverflow.Ellipsis) }
         Text((if(e.kind==EntryKind.INCOME) "+" else if(e.kind==EntryKind.EXPENSE) "−" else "") + formatMoney(e.amountMinor, currency), color=color, fontWeight=FontWeight.Bold)
         if(onDelete != null) IconButton(onClick=onDelete) { Icon(Icons.Rounded.DeleteOutline, "Удалить", tint=Color(0xFFFF7C9B)) }
     }

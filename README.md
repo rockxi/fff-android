@@ -25,7 +25,13 @@ remains local during an in-place update.
   separately for every currency.
   Finance forms use cohesive dark, accessible controls with explicit selected and
   validation states, phone-sized touch targets and keyboard-aware scrolling.
-- **AI Harness** is the native chat for the FFF assistant. Pair the device with the
+- **AI Harness** is a server-backed multi-conversation chat for the FFF assistant.
+  It restores history, keeps one draft per conversation, paginates older messages
+  and supports create, rename, archive/restore and delete actions. A pinned
+  immutable **EE** conversation mirrors the bound Telegram topic in both
+  directions: Harness posts from the owner's account through User API, while
+  direct owner messages and Bot API answers appear back in Android. Retries reuse
+  a stable UUID to prevent duplicates. Pair the device with the
   short code shown in the app and approve it personally with `/pair CODE` in the
   Telegram AI topic. The bearer credential is encrypted with Android Keystore.
   Unpairing durably revokes it, and the app returns to pairing if the server reports

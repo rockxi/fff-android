@@ -31,7 +31,30 @@ Backups are versioned JSON documents selected through Android Storage Access Fra
 
 ## Harness
 
-Harness code is in `data/harness` and `ui/harness`. A short pairing code is approved by the owner in the Telegram AI topic. The resulting bearer token is stored with Android Keystore encryption. Revocation is durable. The backend shares the Telegram AI topic's agent/thread identity.
+Harness code is in `data/harness` and `ui/harness`. A short pairing code is approved by the owner in the Telegram AI topic. The resulting bearer token is stored with Android Keystore encryption. Revocation is durable.
+
+Harness is a server-backed multi-conversation client. Conversation metadata and
+message history are loaded from PostgreSQL through `HarnessApi`; ordinary
+conversations have independent agent/LangGraph contexts and can be created,
+renamed, archived, restored and deleted. History is fetched in bounded pages and
+rendered oldest-to-newest. `nextBefore` loads older pages without replacing
+visible messages. Source labels distinguish owner, agent and Telegram messages.
+
+The pinned immutable `EE` conversation is a bidirectional view of the exact
+Telegram topic configured by `/bind_ai_topic`. Sending supplies a stable UUID,
+returns pending after the backend's Telethon User API send, and polls history
+every three seconds only while EE is visible. Direct owner messages and Bot API
+responses appear in the same history. Polling merges by server message ID,
+preserves older pages/cursors and stops when the screen closes. Ordinary
+conversations wait for the agent response and do not poll Telegram.
+
+Composer drafts live in private `SharedPreferences`, separately per
+conversation; they are not Finance SQLite data or part of Finance backups.
+Pending sends persist text and `clientMessageId`, so explicit retry after a
+network failure reuses the idempotency key. Success clears draft and pending
+state. Android bounds input to 20,000 UTF-8 bytes. Reopening reloads canonical
+server history and restores the local draft. Message history, Telegram secrets
+and bearer plaintext must not be written to logs or Finance backups.
 
 ## Remote Control
 
@@ -66,6 +89,10 @@ Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and cont
 The updater is in `update/`. With explicit consent it reads the latest public GitHub release, accepts only the canonical `fff-<tag>.apk` and matching `.sha256`, downloads with size/redirect limits, verifies SHA-256, and opens Android Package Installer through a non-exported FileProvider. Android may require the user to authorize installs from FFF once.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.7.0` (`versionCode 10`) introduces persistent Harness conversations
+and the pinned EE bridge while retaining `applicationId=ru.rockxi.fff` and the
+existing update channel.
 
 ## Verification checklist
 

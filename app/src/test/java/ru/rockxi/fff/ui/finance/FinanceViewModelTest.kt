@@ -29,7 +29,7 @@ class FinanceViewModelTest {
         assertTrue(categoryEmoji.distinct().size >= 100)
     }
 
-    @Test fun `operations timeline groups local days and totals only today expenses per currency`() {
+    @Test fun `operations timeline groups local days and totals expenses per day and currency`() {
         val zone = ZoneId.of("Europe/Moscow")
         val today = java.time.LocalDate.of(2026, 9, 8)
         fun at(day: java.time.LocalDate, hour: Int) = day.atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
@@ -40,13 +40,23 @@ class FinanceViewModelTest {
             LedgerEntryEntity(3, EntryKind.EXPENSE, 700, 1, categoryId = 1, occurredAt = at(today, 23)),
             LedgerEntryEntity(4, EntryKind.EXPENSE, 250, 2, categoryId = 1, occurredAt = at(today, 12)),
             LedgerEntryEntity(5, EntryKind.EXPENSE, 1_000, 1, categoryId = 1, occurredAt = at(today.minusDays(1), 23)),
+            LedgerEntryEntity(6, EntryKind.INCOME, 5_000, 2, categoryId = 2, occurredAt = at(today.minusDays(1), 22)),
+            LedgerEntryEntity(7, EntryKind.TRANSFER, 3_000, 1, transferAccountId = 2, occurredAt = at(today.minusDays(1), 21)),
+            LedgerEntryEntity(8, EntryKind.EXPENSE, 300, 2, categoryId = 1, occurredAt = at(today.minusDays(1), 20)),
         )
 
         val timeline = operationsTimeline(entries, accounts, zone, today)
 
         assertEquals(listOf(today, today.minusDays(1)), timeline.days.map { it.date })
         assertEquals(listOf(3L, 4L, 2L, 1L), timeline.days.first().entries.map { it.id })
+        assertEquals(mapOf("RUB" to 1_200L, "USD" to 250L), timeline.days.first().expenseMinorByCurrency)
+        assertEquals(mapOf("RUB" to 1_000L, "USD" to 300L), timeline.days.last().expenseMinorByCurrency)
+        assertEquals(listOf("RUB", "USD"), timeline.days.last().expenseMinorByCurrency.keys.toList())
         assertEquals(mapOf("RUB" to 1_200L, "USD" to 250L), timeline.todayExpenseMinorByCurrency)
+    }
+
+    @Test fun `operation day date uses zero padded absolute format`() {
+        assertEquals("08.09.2026", formatOperationDayDate(java.time.LocalDate.of(2026, 9, 8)))
     }
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }

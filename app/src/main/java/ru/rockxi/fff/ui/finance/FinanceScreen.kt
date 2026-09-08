@@ -286,19 +286,25 @@ fun FinanceScreen(onBack: () -> Unit) {
         item(key = "operations-history-title") { SectionTitle("История по дням") }
         if (timeline.days.isEmpty()) item(key = "operations-empty") { EmptyText("Добавьте первую операцию кнопкой ниже") }
         timeline.days.forEach { day ->
-            item(key = "operation-day:${day.date}") { DayHeading(day.date, today) }
+            item(key = "operation-day:${day.date}") { DayHeading(day) }
             items(day.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state, { onDelete(entry) }, showDate = false) }
         }
     }
 }
 
-@Composable private fun DayHeading(date: java.time.LocalDate, today: java.time.LocalDate) {
-    val title = when (date) {
-        today -> "Сегодня"
-        today.minusDays(1) -> "Вчера"
-        else -> date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("ru")))
+@Composable private fun DayHeading(day: OperationDayGroup) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 1.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(formatOperationDayDate(day.date), color = FffMint, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 12.dp)) {
+            day.expenseMinorByCurrency.forEach { (currency, amount) ->
+                Text(formatMoney(amount, currency), color = Color(0xFFFF7C9B), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+        }
     }
-    Text(title.replaceFirstChar { it.uppercase() }, color = FffMint, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 7.dp, bottom = 1.dp))
 }
 
 @Composable private fun Analytics(state: FinanceUiState) = LazyColumn(

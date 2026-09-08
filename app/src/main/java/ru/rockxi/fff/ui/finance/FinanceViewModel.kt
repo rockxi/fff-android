@@ -30,6 +30,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.time.ZoneId
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Currency
 
 internal interface FinanceStore {
@@ -117,6 +118,7 @@ internal data class BudgetBreakdown(
 internal data class OperationDayGroup(
     val date: LocalDate,
     val entries: List<LedgerEntryEntity>,
+    val expenseMinorByCurrency: Map<String, Long>,
 )
 
 internal data class OperationsTimeline(
@@ -133,7 +135,15 @@ internal fun operationsTimeline(
     val accountsById = accounts.associateBy { it.id }
     val sorted = entries.sortedWith(compareByDescending<LedgerEntryEntity> { it.occurredAt }.thenByDescending { it.id })
     val days = sorted.groupBy { java.time.Instant.ofEpochMilli(it.occurredAt).atZone(zone).toLocalDate() }
-        .map { (date, values) -> OperationDayGroup(date, values) }
+        .map { (date, values) ->
+            val expenseTotals = values.asSequence()
+                .filter { it.kind == EntryKind.EXPENSE }
+                .mapNotNull { entry -> accountsById[entry.accountId]?.currency?.let { it to entry.amountMinor } }
+                .groupingBy { it.first }
+                .fold(0L) { total, (_, amount) -> saturatedAdd(total, amount) }
+                .toSortedMap()
+            OperationDayGroup(date, values, expenseTotals)
+        }
         .sortedByDescending { it.date }
     val currencies = accounts.map { it.currency }.distinct().sorted()
     val totals = currencies.associateWith { currency ->
@@ -145,6 +155,10 @@ internal fun operationsTimeline(
     }
     return OperationsTimeline(days, totals)
 }
+
+private val operationDayDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+
+internal fun formatOperationDayDate(date: LocalDate): String = date.format(operationDayDateFormatter)
 
 internal fun <T> fourColumnRows(items: List<T>): List<List<T>> = items.chunked(4)
 

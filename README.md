@@ -41,6 +41,14 @@ remains local during an in-place update.
   ProxyJump. It runs non-interactive terminal commands and starts background
   `codex exec --json` sessions whose status and retained output can be revisited
   from the app. Credentials are submitted once and are not stored on the phone.
+- **Gym Tracker** is a local workout log that opens on today. Exercises belong to
+  the built-in chest, back, shoulders, legs, arms, abs and cardio categories;
+  each day stores editable sets with repetitions and either equipment weight or
+  an explicitly entered body weight. The calendar marks workout days and opens
+  any selected date for review and editing. The heaviest historical result for
+  the same exercise and repetition count is highlighted as a personal record.
+  Gym uses its own private Room/SQLite database. Finance JSON backup files do not
+  include Gym data.
 
 Remote Control grants the paired device the authority of the configured remote
 Unix accounts. Prefer dedicated least-privilege accounts and trusted server host

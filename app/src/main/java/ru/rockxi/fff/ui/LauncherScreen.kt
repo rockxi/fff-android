@@ -21,7 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.ArrowOutward
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -94,7 +97,13 @@ private fun BrandBar() {
 private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit) {
     val accent = if (app.accent == AppAccent.Mint) FffMint else FffViolet
     val darkAccent = if (app.accent == AppAccent.Mint) Color(0xFF13231F) else Color(0xFF1F192C)
-    val icon = if (app.destination == Destination.RemoteControl) Icons.Rounded.Terminal else Icons.Rounded.AccountBalanceWallet
+    val icon = when (app.destination) {
+        Destination.Launcher -> Icons.Rounded.Dashboard
+        Destination.Finance -> Icons.Rounded.AccountBalanceWallet
+        Destination.RemoteControl -> Icons.Rounded.Terminal
+        Destination.Harness -> Icons.Rounded.AutoAwesome
+        Destination.Gym -> Icons.Rounded.FitnessCenter
+    }
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(FffSurface)
             .border(1.dp, FffLine, RoundedCornerShape(18.dp)).clickable(onClick = onClick),
@@ -159,4 +168,3 @@ fun ModulePlaceholder(kicker: String, title: String, description: String, onBack
         ) { Text("Модуль готов к подключению данных", color = FffMint, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
     }
 }
-

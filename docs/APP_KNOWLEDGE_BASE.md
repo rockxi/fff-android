@@ -7,6 +7,7 @@ FFF is the main native Android application and launcher. It presents a catalog o
 - **Finance** — local-first personal finance, accounts, categories, operations and monthly budgets.
 - **Harness** — authenticated native client for the same AI agent and conversation used by the Telegram bot.
 - **Remote Control** — SSH host management, non-interactive terminal commands and background Codex CLI sessions.
+- **Gym Tracker** — local workout journal with exercises, sets, records and a calendar.
 
 The Android package is `ru.rockxi.fff`. Navigation starts in `ui/FffApp.kt`; catalog metadata lives in `model/FffApplication.kt`; destinations live in `navigation/Destination.kt`.
 
@@ -80,6 +81,34 @@ The AI Harness exposes host listing and SSH command tools. Command execution is
 allowed only for an explicit user request and at most once per agent turn. Remote
 stdout/stderr is wrapped and treated as untrusted data, never as agent instructions.
 
+## Gym Tracker
+
+Gym Tracker code is split between `data/gym` (Room entities, DAO, database and
+repository) and `ui/gym` (state, ViewModel and Compose screens). It uses the
+separate application-private `fff-gym.db` database. Version 1 seeds seven
+categories: Грудь, Спина, Плечи, Ноги, Руки, Пресс and Кардио. Exercises belong
+to exactly one category; sets belong to an exercise and a local calendar day.
+
+Opening Gym Tracker shows today. A workout day can be explicitly started, and
+adding a set also ensures its day exists. Merely browsing a calendar date does
+not create a stored workout day. Sets contain a positive repetition count and
+either a positive equipment weight or an explicitly entered body weight, stored
+as integer grams. These two weight modes are mutually exclusive. Exercises and
+sets can be created, edited and explicitly deleted from the phone UI.
+
+The Monday-first six-week calendar shows workout activity for the displayed
+month and opens any date into the same editable day/exercise flow; “Сегодня”
+returns to the current local date. A set is a personal record when its effective
+weight is tied for the highest historical weight for that exact exercise and
+repetition count. Record sets receive a gold visual and accessibility label.
+
+Gym is local-only and independent from Finance. The versioned Finance JSON
+backup exports only Finance tables and **does not include `fff-gym.db` or Gym
+data**. Platform app-data backup is also disabled explicitly by the manifest
+(`android:allowBackup="false"` and `android:fullBackupContent="false"`), so it
+does not provide a separate Gym backup. Preserving Gym data currently relies on
+keeping the installed application's private data during in-place updates.
+
 ## UI system
 
 Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and controls belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent. Finance text inputs expose focus, supporting and field-error states; custom single-choice rows and four-column emoji/category grids provide checked radio semantics and at least 48dp touch targets.
@@ -90,9 +119,9 @@ The updater is in `update/`. With explicit consent it reads the latest public Gi
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
-Version `0.7.0` (`versionCode 10`) introduces persistent Harness conversations
-and the pinned EE bridge while retaining `applicationId=ru.rockxi.fff` and the
-existing update channel.
+Version `0.8.0` (`versionCode 11`) adds the local Gym Tracker with today and
+calendar editing, weighted/bodyweight sets and personal-record highlighting,
+while retaining `applicationId=ru.rockxi.fff` and the existing update channel.
 
 ## Verification checklist
 

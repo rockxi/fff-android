@@ -43,5 +43,14 @@ object AppCatalog {
             accent = AppAccent.Violet,
             destination = Destination.Finance,
         ),
+        FffApplication(
+            id = "gym",
+            name = "Gym Tracker",
+            kicker = "TRAINING LOG",
+            description = "Тренировки по дням, подходы с весом и повторениями, календарь и личные рекорды.",
+            meta = "WORKOUTS · SETS · RECORDS",
+            accent = AppAccent.Mint,
+            destination = Destination.Gym,
+        ),
     )
 }

@@ -35,7 +35,15 @@ remains local during an in-place update.
   short code shown in the app and approve it personally with `/pair CODE` in the
   Telegram AI topic. The bearer credential is encrypted with Android Keystore.
   Unpairing durably revokes it, and the app returns to pairing if the server reports
-  that the session has expired.
+  that the session has expired. Ordinary conversations can alternatively use
+  Codex through the owner's ChatGPT subscription: the app shows a device code,
+  opens the official HTTPS authorization page and then loads only the models from
+  the server allowlist. The authorization action is shown only for the exact
+  uncredentialed `https://auth.openai.com` origin. Provider/model choices and retry identity are kept per
+  conversation; OAuth credentials remain on the FFF server and EE always retains
+  its Telegram transport. The chat viewport applies keyboard insets once, keeping
+  the composer directly above the IME instead of lifting it by the keyboard height
+  twice.
 - **Remote Control** uses the same paired Harness credential to manage owner-scoped
   SSH profiles with password or private-key authentication and an optional single
   ProxyJump. It runs non-interactive terminal commands and starts background
@@ -45,8 +53,11 @@ remains local during an in-place update.
   the built-in chest, back, shoulders, legs, arms, abs and cardio categories;
   each day stores editable sets with repetitions and either equipment weight or
   an explicitly entered body weight. The calendar marks workout days and opens
-  any selected date for review and editing. The heaviest historical result for
-  the same exercise and repetition count is highlighted as a personal record.
+  any selected date for review and editing. Exactly one set per exercise is the
+  all-time personal record: highest effective weight wins, then repetitions, then
+  the earliest persisted set for a complete tie. A new-set form is prefilled from
+  that exercise's most recently persisted set, including weight mode, weight and
+  repetitions; editing retains the selected set's own values.
   Gym uses its own private Room/SQLite database. Finance JSON backup files do not
   include Gym data.
 

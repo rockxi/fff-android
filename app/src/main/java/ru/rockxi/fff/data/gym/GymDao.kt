@@ -35,11 +35,19 @@ internal interface GymDao {
     @Query("SELECT * FROM gym_sets WHERE exerciseId = :exerciseId AND localDate = :localDate ORDER BY createdAt, id")
     suspend fun sets(exerciseId: Long, localDate: String): List<GymSetEntity>
     @Query("SELECT * FROM gym_sets WHERE localDate = :localDate ORDER BY createdAt, id") suspend fun sets(localDate: String): List<GymSetEntity>
+    @Query("SELECT * FROM gym_sets WHERE exerciseId = :exerciseId ORDER BY localDate DESC, createdAt DESC, id DESC LIMIT 1")
+    suspend fun latestSet(exerciseId: Long): GymSetEntity?
     @Query("UPDATE gym_sets SET exerciseId=:exerciseId, localDate=:localDate, repetitions=:repetitions, mode=:mode, weightGrams=:weightGrams, bodyWeightGrams=:bodyWeightGrams WHERE id=:id")
     suspend fun updateSet(id: Long, exerciseId: Long, localDate: String, repetitions: Int, mode: GymSetMode, weightGrams: Long?, bodyWeightGrams: Long?): Int
     @Query("DELETE FROM gym_sets WHERE id = :id") suspend fun deleteSet(id: Long): Int
-    @Query("SELECT MAX(CASE WHEN mode='BODY_WEIGHT' THEN bodyWeightGrams ELSE weightGrams END) FROM gym_sets WHERE exerciseId=:exerciseId AND repetitions=:repetitions")
-    suspend fun recordWeight(exerciseId: Long, repetitions: Int): Long?
+    /**
+     * Selects the exercise's single all-time record. Effective weight wins first,
+     * then repetitions; a completely equal result keeps the earliest persisted set.
+     */
+    @Query("""SELECT id FROM gym_sets WHERE exerciseId=:exerciseId
+        ORDER BY CASE WHEN mode='BODY_WEIGHT' THEN bodyWeightGrams ELSE weightGrams END DESC,
+        repetitions DESC, createdAt ASC, id ASC LIMIT 1""")
+    suspend fun recordSetId(exerciseId: Long): Long?
 
     @Query("""SELECT e.id AS exerciseId, e.name AS exerciseName, c.id AS categoryId, c.name AS categoryName,
         COUNT(s.id) AS setCount, COALESCE(SUM(s.repetitions), 0) AS totalRepetitions

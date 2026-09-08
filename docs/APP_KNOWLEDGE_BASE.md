@@ -49,6 +49,24 @@ responses appear in the same history. Polling merges by server message ID,
 preserves older pages/cursors and stops when the screen closes. Ordinary
 conversations wait for the agent response and do not poll Telegram.
 
+Ordinary conversations can use either the existing agent provider or Codex backed
+by the owner's ChatGPT subscription. Codex device authorization runs on the FFF
+server: Android receives only the public HTTPS verification URL, user code and
+connection state, and never stores OpenAI OAuth credentials. As defense in depth,
+Android displays the code/open actions only for an uncredentialed HTTPS URL on
+the exact `auth.openai.com` origin; lookalike suffixes and custom ports fail closed. Status polling is
+bounded and runs only while the Harness screen is visible and authorization is
+pending. A pending or expired challenge can be restarted; restart first completes
+server logout and immediately clears the local challenge/model state before it
+requests a new code, so a failed second step remains truthfully disconnected.
+Auth status and command responses are generation-checked so stale requests cannot
+overwrite a newer login or logout. The model list is always loaded from the authenticated server allowlist;
+provider and model preferences are stored per conversation in private
+`SharedPreferences`, with a stale model falling back to the first currently
+allowed model. EE never exposes provider/model selection and always uses its
+Telegram path. Provider and model are also persisted with a pending send so an
+explicit retry preserves the backend's idempotency identity.
+
 Composer drafts live in private `SharedPreferences`, separately per
 conversation; they are not Finance SQLite data or part of Finance backups.
 Pending sends persist text and `clientMessageId`, so explicit retry after a
@@ -99,8 +117,11 @@ sets can be created, edited and explicitly deleted from the phone UI.
 The Monday-first six-week calendar shows workout activity for the displayed
 month and opens any date into the same editable day/exercise flow; “Сегодня”
 returns to the current local date. A set is a personal record when its effective
-weight is tied for the highest historical weight for that exact exercise and
-repetition count. Record sets receive a gold visual and accessibility label.
+weight is the single best result for that exercise: effective weight wins, then
+the larger repetition count, then the earliest `createdAt`/ID for a complete tie.
+Record sets receive a gold visual and accessibility label. Creating a set prefills
+mode, effective weight and repetitions from the latest persisted set for the same
+exercise across all dates; editing always uses that set's own values instead.
 
 Gym is local-only and independent from Finance. The versioned Finance JSON
 backup exports only Finance tables and **does not include `fff-gym.db` or Gym
@@ -119,9 +140,11 @@ The updater is in `update/`. With explicit consent it reads the latest public Gi
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
-Version `0.8.0` (`versionCode 11`) adds the local Gym Tracker with today and
-calendar editing, weighted/bodyweight sets and personal-record highlighting,
-while retaining `applicationId=ru.rockxi.fff` and the existing update channel.
+Version `0.9.0` (`versionCode 12`) adds Codex subscription device authorization
+and per-conversation provider/model selection to Harness, corrects its IME inset
+handling, makes Gym records unique per exercise and prefills a new set from the
+latest historical set. It retains `applicationId=ru.rockxi.fff`, the established
+signing identity and the existing update channel.
 
 ## Verification checklist
 

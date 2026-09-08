@@ -91,24 +91,54 @@ class GymRepositoryTest {
         }
     }
 
-    @Test fun recordsUseAllHistorySameExerciseAndExactRepCountWithTies() = runBlocking {
+    @Test fun exerciseHasOneRecordAcrossAllRepCountsAndEqualWeightPrefersMoreRepetitions() = runBlocking {
         val category = repository.categories().first().id
         val bench = repository.createExercise(category, "Жим")
         val other = repository.createExercise(category, "Другой жим")
         val earlier = LocalDate.of(2026, 8, 1)
         val today = LocalDate.of(2026, 9, 8)
         repository.addExternalWeightSet(bench, earlier, 8, 80_000)
-        repository.addExternalWeightSet(bench, earlier, 10, 100_000)
+        repository.addExternalWeightSet(bench, earlier, 10, 90_000)
         repository.addExternalWeightSet(other, earlier, 8, 200_000)
-        repository.addExternalWeightSet(bench, today, 8, 80_000)
-        repository.addExternalWeightSet(bench, today, 8, 79_000)
-        repository.addExternalWeightSet(bench, today, 10, 90_000)
-        repository.addBodyWeightSet(bench, today, 12, 75_000)
+        repository.addBodyWeightSet(bench, today, 10, 95_000)
+        repository.addBodyWeightSet(bench, today, 8, 95_000)
+        repository.addExternalWeightSet(bench, today, 12, 94_000)
 
         val records = repository.exerciseSets(bench, today)
-        assertEquals(listOf(true, false, false, true), records.map { it.isAllTimeRecord })
-        // A first set for a repetition count is the athlete's current all-time record.
-        assertTrue(records.last().isAllTimeRecord)
+        assertEquals(listOf(true, false, false), records.map { it.isAllTimeRecord })
+        assertEquals(1, records.count { it.isAllTimeRecord })
+    }
+
+    @Test fun exactRecordTieKeepsEarliestSetAndEditDeleteRecomputeWinner() = runBlocking {
+        val exercise = repository.createExercise(repository.categories().first().id, "Тяга")
+        val earlier = LocalDate.of(2026, 9, 7)
+        val today = earlier.plusDays(1)
+        val first = repository.addExternalWeightSet(exercise, earlier, 8, 100_000)
+        val second = repository.addBodyWeightSet(exercise, today, 8, 100_000)
+
+        assertTrue(repository.exerciseSets(exercise, earlier).single().isAllTimeRecord)
+        assertFalse(repository.exerciseSets(exercise, today).single().isAllTimeRecord)
+
+        repository.updateBodyWeightSet(second, exercise, today, 9, 100_000)
+        assertFalse(repository.exerciseSets(exercise, earlier).single().isAllTimeRecord)
+        assertTrue(repository.exerciseSets(exercise, today).single().isAllTimeRecord)
+
+        repository.deleteSet(second)
+        assertTrue(repository.exerciseSets(exercise, earlier).single().isAllTimeRecord)
+        assertEquals(first, repository.exerciseSets(exercise, earlier).single().set.id)
+    }
+
+    @Test fun latestSetUsesNewestDateAndStableInsertionOrderWithinDay() = runBlocking {
+        val exercise = repository.createExercise(repository.categories().first().id, "Присед")
+        val earlier = LocalDate.of(2026, 9, 7)
+        val latest = earlier.plusDays(1)
+        repository.addExternalWeightSet(exercise, earlier, 10, 120_000)
+        repository.addExternalWeightSet(exercise, latest, 8, 125_000)
+        val newest = repository.addBodyWeightSet(exercise, latest, 12, 95_000)
+
+        assertEquals(newest, repository.latestSet(exercise)?.id)
+        assertEquals(null, repository.latestSet(repository.createExercise(repository.categories().first().id, "Пустое")))
+        assertFails { repository.latestSet(Long.MAX_VALUE) }
     }
 
     @Test fun dayAndMonthProjectionsSupportTodayAndCalendarScreens() = runBlocking {

@@ -80,11 +80,17 @@ internal class GymRepository(private val database: GymDatabase) {
 
     suspend fun daySummary(date: LocalDate): List<GymDayExerciseSummary> = dao.daySummary(date.toString())
 
+    /** Latest historical set, with persisted insertion order breaking same-day ties. */
+    suspend fun latestSet(exerciseId: Long): GymSetEntity? {
+        requireNotNull(dao.exercise(exerciseId)) { "Упражнение не найдено" }
+        return dao.latestSet(exerciseId)
+    }
+
     suspend fun exerciseSets(exerciseId: Long, date: LocalDate): List<GymSetWithRecord> {
         requireNotNull(dao.exercise(exerciseId)) { "Упражнение не найдено" }
+        val recordSetId = dao.recordSetId(exerciseId)
         return dao.sets(exerciseId, date.toString()).map { set ->
-            val record = dao.recordWeight(exerciseId, set.repetitions)
-            GymSetWithRecord(set, record != null && effectiveWeight(set) == record)
+            GymSetWithRecord(set, set.id == recordSetId)
         }
     }
 
@@ -111,11 +117,6 @@ internal class GymRepository(private val database: GymDatabase) {
             GymSetMode.EXTERNAL_WEIGHT -> require(weight != null && weight > 0 && bodyWeight == null) { "Укажите вес упражнения" }
             GymSetMode.BODY_WEIGHT -> require(bodyWeight != null && bodyWeight > 0 && weight == null) { "Укажите собственный вес" }
         }
-    }
-
-    private fun effectiveWeight(set: GymSetEntity): Long = when (set.mode) {
-        GymSetMode.EXTERNAL_WEIGHT -> requireNotNull(set.weightGrams)
-        GymSetMode.BODY_WEIGHT -> requireNotNull(set.bodyWeightGrams)
     }
 
     private fun requiredName(value: String): String = value.trim().also { require(it.isNotEmpty()) { "Название обязательно" } }

@@ -49,6 +49,32 @@ class GymViewModelTest {
         assertFalse(vm.state.value.sets.any { it.set.id == id })
     }
 
+    @Test fun `latest historical set prefills state across dates and refreshes after save`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply {
+            allSets.clear()
+            allSets += GymSetEntity(7, 1, "2026-09-02", 12, GymSetMode.BODY_WEIGHT, bodyWeightGrams = 82_500, createdAt = 20)
+            allSets += GymSetEntity(8, 1, "2026-09-07", 6, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 95_000, createdAt = 10)
+            allSets += GymSetEntity(9, 1, "2026-09-07", 7, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 97_500, createdAt = 20)
+        }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+        assertEquals(9L, vm.state.value.latestSet?.id)
+        assertEquals(97_500L, vm.state.value.latestSet?.weightGrams)
+        assertEquals(7, vm.state.value.latestSet?.repetitions)
+
+        vm.saveSet(null, GymSetMode.BODY_WEIGHT, "83,25", "11", failValidation(), {}); advanceUntilIdle()
+        assertEquals(GymSetMode.BODY_WEIGHT, vm.state.value.latestSet?.mode)
+        assertEquals(83_250L, vm.state.value.latestSet?.bodyWeightGrams)
+        assertEquals(11, vm.state.value.latestSet?.repetitions)
+    }
+
+    @Test fun `latest set is absent for exercise without history`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply { allSets.clear() }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+        assertNull(vm.state.value.latestSet)
+    }
+
     @Test fun `invalid fields are reported and input remains caller-owned`() {
         val zero = validateGymSet("0", "-1")
         assertFalse(zero.valid); assertNotNull(zero.weightError); assertNotNull(zero.repetitionsError)
@@ -62,6 +88,20 @@ class GymViewModelTest {
         val set = GymSetEntity(id=9, exerciseId=1, localDate="2026-09-08", repetitions=10, mode=GymSetMode.BODY_WEIGHT, bodyWeightGrams=82_500)
         assertEquals("Свой вес · 82.5 кг", setWeightLabel(set))
         assertTrue(GymSetWithRecord(set, true).isAllTimeRecord)
+    }
+
+    @Test fun `new set draft maps weighted bodyweight and empty history`() {
+        val weighted = GymSetEntity(1, 1, "2026-09-07", 8, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 95_500)
+        assertEquals(GymSetDraft(GymSetMode.EXTERNAL_WEIGHT, "95.5", "8"), gymSetDraft(null, weighted))
+        val bodyweight = GymSetEntity(2, 1, "2026-09-08", 12, GymSetMode.BODY_WEIGHT, bodyWeightGrams = 82_250)
+        assertEquals(GymSetDraft(GymSetMode.BODY_WEIGHT, "82.25", "12"), gymSetDraft(null, bodyweight))
+        assertEquals(GymSetDraft(GymSetMode.EXTERNAL_WEIGHT, "", ""), gymSetDraft(null, null))
+    }
+
+    @Test fun `editing uses current set instead of historical default`() {
+        val current = GymSetEntity(1, 1, "2026-09-01", 5, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 110_000)
+        val latest = GymSetEntity(2, 1, "2026-09-08", 15, GymSetMode.BODY_WEIGHT, bodyWeightGrams = 83_000)
+        assertEquals(GymSetDraft(GymSetMode.EXTERNAL_WEIGHT, "110", "5"), gymSetDraft(current, latest))
     }
 
     @Test fun `calendar grid is Monday first and handles leap and year boundaries`() {
@@ -170,6 +210,8 @@ private class FakeGymStore : GymStore {
     override suspend fun monthActivity(month: YearMonth): List<GymMonthActivity> = days.filter { YearMonth.from(LocalDate.parse(it))==month }.sorted().map { day -> val sets=allSets.filter { it.localDate==day }; GymMonthActivity(day,sets.map { it.exerciseId }.distinct().size.toLong(),sets.size.toLong(),sets.sumOf { it.repetitions }.toLong()) }
     override suspend fun ensureWorkoutDay(date: LocalDate) { ensureDayCalls++; days += date.toString() }
     override suspend fun sets(exerciseId: Long, date: LocalDate):List<GymSetWithRecord> { if(delayExerciseTwoSets && exerciseId==2L) exerciseTwoGate.await(); return allSets.filter { it.exerciseId==exerciseId && it.localDate==date.toString() }.map { GymSetWithRecord(it, it.id==1L) } }
+    override suspend fun latestSet(exerciseId: Long): GymSetEntity? = allSets.filter { it.exerciseId == exerciseId }
+        .maxWithOrNull(compareBy<GymSetEntity>({ it.localDate }, { it.createdAt }, { it.id }))
     override suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long): Long { addCalls++; if(failNextAdd){failNextAdd=false; error("write failed")}; days += date.toString(); val id=next++; allSets += GymSetEntity(id,exerciseId,date.toString(),reps,mode,if(mode==GymSetMode.EXTERNAL_WEIGHT) grams else null,if(mode==GymSetMode.BODY_WEIGHT) grams else null); return id }
     override suspend fun update(id: Long, exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long) { val i=allSets.indexOfFirst { it.id==id }; allSets[i]=GymSetEntity(id,exerciseId,date.toString(),reps,mode,if(mode==GymSetMode.EXTERNAL_WEIGHT) grams else null,if(mode==GymSetMode.BODY_WEIGHT) grams else null) }
     override suspend fun deleteSet(id: Long) { allSets.removeAll { it.id==id } }

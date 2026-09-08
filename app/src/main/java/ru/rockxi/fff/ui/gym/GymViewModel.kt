@@ -29,6 +29,7 @@ internal interface GymStore {
     suspend fun monthActivity(month: YearMonth): List<GymMonthActivity>
     suspend fun ensureWorkoutDay(date: LocalDate)
     suspend fun sets(exerciseId: Long, date: LocalDate): List<GymSetWithRecord>
+    suspend fun latestSet(exerciseId: Long): GymSetEntity?
     suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long): Long
     suspend fun update(id: Long, exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long)
     suspend fun deleteSet(id: Long)
@@ -44,6 +45,7 @@ internal class RepositoryGymStore(private val repository: GymRepository) : GymSt
     override suspend fun monthActivity(month: YearMonth) = repository.monthActivity(month)
     override suspend fun ensureWorkoutDay(date: LocalDate) { repository.ensureWorkoutDay(date) }
     override suspend fun sets(exerciseId: Long, date: LocalDate) = repository.exerciseSets(exerciseId, date)
+    override suspend fun latestSet(exerciseId: Long) = repository.latestSet(exerciseId)
     override suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long) =
         if (mode == GymSetMode.BODY_WEIGHT) repository.addBodyWeightSet(exerciseId, date, reps, grams)
         else repository.addExternalWeightSet(exerciseId, date, reps, grams)
@@ -63,6 +65,7 @@ internal data class GymState(
     val summary: List<GymDayExerciseSummary> = emptyList(),
     val selectedExercise: GymExerciseEntity? = null,
     val sets: List<GymSetWithRecord> = emptyList(),
+    val latestSet: GymSetEntity? = null,
     val busy: Boolean = false,
     val error: String? = null,
 )
@@ -110,6 +113,15 @@ internal fun validateGymSet(weight: String, repetitions: String): SetValidation 
 }
 
 internal fun formatWeight(grams: Long): String = if (grams % 1000L == 0L) "${grams / 1000} кг" else "${BigDecimal(grams).divide(BigDecimal(1000)).stripTrailingZeros().toPlainString()} кг"
+internal data class GymSetDraft(val mode: GymSetMode, val weight: String, val repetitions: String)
+internal fun gymSetDraft(current: GymSetEntity?, latest: GymSetEntity?): GymSetDraft {
+    val source = current ?: latest
+    return GymSetDraft(
+        mode = source?.mode ?: GymSetMode.EXTERNAL_WEIGHT,
+        weight = source?.let { formatWeight(it.weightGrams ?: requireNotNull(it.bodyWeightGrams)).removeSuffix(" кг") }.orEmpty(),
+        repetitions = source?.repetitions?.toString().orEmpty(),
+    )
+}
 internal fun setWeightLabel(set: GymSetEntity): String = when (set.mode) {
     GymSetMode.EXTERNAL_WEIGHT -> formatWeight(requireNotNull(set.weightGrams))
     GymSetMode.BODY_WEIGHT -> "Свой вес · ${formatWeight(requireNotNull(set.bodyWeightGrams))}"
@@ -130,22 +142,24 @@ internal class GymViewModel(
         val activity = store.monthActivity(mutable.value.month)
         val selected = mutable.value.selectedExercise?.let { old -> exercises.firstOrNull { it.id == old.id } }
         mutable.value = mutable.value.copy(categories = categories, exercises = exercises, summary = summary,
-            selectedExercise = selected, sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(), monthActivity = activity, busy = false, error = null)
+            selectedExercise = selected, sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(),
+            latestSet = selected?.let { store.latestSet(it.id) }, monthActivity = activity, busy = false, error = null)
     }
     fun previousMonth() = changeMonth(mutable.value.month.minusMonths(1))
     fun nextMonth() = changeMonth(mutable.value.month.plusMonths(1))
     fun selectDate(date: LocalDate) = launch {
         val month = YearMonth.from(date)
-        mutable.value = mutable.value.copy(date = date, month = month, selectedExercise = null, sets = emptyList(),
+        mutable.value = mutable.value.copy(date = date, month = month, selectedExercise = null, sets = emptyList(), latestSet = null,
             summary = store.daySummary(date), monthActivity = store.monthActivity(month), busy = false, error = null)
     }
     fun selectToday() = selectDate(mutable.value.today)
     fun startWorkoutDay() = mutate(block = { store.ensureWorkoutDay(mutable.value.date); reloadNow() })
     fun openExercise(id: Long) = launch {
         val exercise = mutable.value.exercises.firstOrNull { it.id == id } ?: error("Упражнение не найдено")
-        mutable.value = mutable.value.copy(selectedExercise = exercise, sets = store.sets(id, mutable.value.date), busy = false)
+        mutable.value = mutable.value.copy(selectedExercise = exercise, sets = store.sets(id, mutable.value.date),
+            latestSet = store.latestSet(id), busy = false)
     }
-    fun closeExercise() { mutable.value = mutable.value.copy(selectedExercise = null, sets = emptyList()) }
+    fun closeExercise() { mutable.value = mutable.value.copy(selectedExercise = null, sets = emptyList(), latestSet = null) }
     fun createExercise(categoryId: Long, name: String, onDone: (Long) -> Unit = {}) = mutate(
         block = { store.createExercise(categoryId, name).also { reloadNow() } },
         onSuccess = onDone,
@@ -174,7 +188,8 @@ internal class GymViewModel(
     private suspend fun reloadNow() {
         val exercises = store.exercises(); val selected = mutable.value.selectedExercise?.let { s -> exercises.firstOrNull { it.id == s.id } }
         mutable.value = mutable.value.copy(exercises = exercises, summary = store.daySummary(mutable.value.date), selectedExercise = selected,
-            sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(), monthActivity = store.monthActivity(mutable.value.month), busy = false, error = null)
+            sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(),
+            latestSet = selected?.let { store.latestSet(it.id) }, monthActivity = store.monthActivity(mutable.value.month), busy = false, error = null)
     }
     private fun changeMonth(month: YearMonth) = launch {
         mutable.value = mutable.value.copy(month = month, monthActivity = store.monthActivity(month), busy = false, error = null)

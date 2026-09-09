@@ -24,8 +24,8 @@ android {
         applicationId = "ru.rockxi.fff"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.9.1"
+        versionCode = 14
+        versionName = "0.9.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -69,10 +69,10 @@ explicit retry preserves the backend's idempotency identity.
 
 Composer drafts live in private `SharedPreferences`, separately per
 conversation; they are not Finance SQLite data or part of Finance backups.
-The main Activity uses `adjustResize`; therefore the Harness chat must not apply
-an additional Compose `imePadding` to its viewport. It adds only navigation-bar
-padding, preventing the keyboard height from being subtracted twice on devices
-that report IME insets after resizing the window.
+The main Activity uses `adjustNothing`, and the Harness chat applies one Compose
+`imePadding` to its viewport. This makes Compose the sole owner of the keyboard
+inset: the system cannot resize the window once while Compose subtracts the same
+keyboard height again.
 Pending sends persist text and `clientMessageId`, so explicit retry after a
 network failure reuses the idempotency key. Success clears draft and pending
 state. Android bounds input to 20,000 UTF-8 bytes. Reopening reloads canonical
@@ -144,9 +144,9 @@ The updater is in `update/`. With explicit consent it reads the latest public Gi
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
-Version `0.9.1` (`versionCode 13`) fixes the Harness composer on Android devices
-that resize the Activity for the keyboard by removing a duplicate Compose IME
-inset. It retains the Codex subscription and Gym improvements from `0.9.0`,
+Version `0.9.2` (`versionCode 14`) fixes the Harness composer by combining
+`adjustNothing` with exactly one Compose IME inset. It retains the Codex
+subscription and Gym improvements from `0.9.0`,
 `applicationId=ru.rockxi.fff`, the established signing identity and the existing
 update channel.
 

@@ -25,7 +25,7 @@ Finance code is split into:
 - `data/finance/FinanceAnalytics.kt` — date presets, aggregate calculations and bounded CSV/JSON exports.
 - `data/finance/FinanceHarnessBridge.kt` — aggregate-only context passed to Harness on explicit opt-in.
 
-The database is `fff-finance.db` in application-private storage. Accounts hold the current balance. Income, expense and transfer entries update balances transactionally. User-created categories belong to one budget; expense account currency must match the category budget currency. Income and expense entry also offer the built-in `Вне бюджета` choice. It is stored as a null ledger `categoryId`, not as a fake category or budget: it affects account balances, operation totals and general analytics, but never budget spending, allocation, remaining balance or budget details. Monthly allocations are keyed by budget and `YYYY-MM`.
+The database is `fff-finance.db` in application-private storage. Accounts hold the current balance. Income, expense and transfer entries update balances transactionally. A user-created category can belong to one budget or explicitly use `Без бюджета`; expense account currency must match the category budget currency when a budget is assigned. Categories without a budget stay available for every account currency, and their operations affect account balances and general analytics but never budget spending, allocation, remaining balance or budget details. Income and expense entry also offer the built-in `Вне бюджета` operation choice. It is stored as a null ledger `categoryId`, not as a fake category or budget. Monthly allocations are keyed by budget and `YYYY-MM`.
 
 Archive is reversible and hides an object from normal pickers. Permanent deletion is explicit. Financial objects referenced by history must not disappear silently: delete the related operations first; deleting an operation reverses its balance effect transactionally.
 
@@ -182,6 +182,10 @@ Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and cont
 The updater is in `update/`. With explicit consent it reads the latest public GitHub release, accepts only the canonical `fff-<tag>.apk` and matching `.sha256`, downloads with size/redirect limits, verifies SHA-256, and opens Android Package Installer through a non-exported FileProvider. Android may require the user to authorize installs from FFF once.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.10.1` (`versionCode 17`) adds the explicit `Без бюджета` assignment
+for categories. Such categories remain available in operations and general
+analytics, while their entries never affect a monthly budget.
 
 Version `0.10.0` (`versionCode 16`) adds Finance analytics and bounded CSV/JSON
 reports, opt-in local Finance context and assistant-requested local exports in the

@@ -46,7 +46,7 @@ data class CategoryEntity(
     val kind: CategoryKind,
     val archived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(defaultValue = "2") val budgetId: Long = 2,
+    val budgetId: Long? = null,
     @ColumnInfo(defaultValue = "'🏷️'") val emoji: String = "🏷️",
 )
 

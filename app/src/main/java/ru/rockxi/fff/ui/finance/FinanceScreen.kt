@@ -345,7 +345,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     items(state.allAccounts, key = { "a${it.id}" }) { entity -> ManageRow(entity.name, "${entity.currency} · ${formatMoney(entity.balanceMinor, entity.currency)}", entity.archived, { archiveAccount(entity.id, !entity.archived) }, { requestAccountDelete(entity) }) }
     item { Spacer(Modifier.height(8.dp)); ManagementHeading("Категории", "Новая категория") { onAdd(DialogKind.CATEGORY) } }
     if (state.allCategories.isEmpty()) item { EmptyText("Категорий нет") }
-    items(state.allCategories, key = { "c${it.id}" }) { entity -> val budget=state.allBudgets.firstOrNull{it.id==entity.budgetId}?.name ?: "—"; ManageRow("${entity.emoji}  ${entity.name}", (if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход")+" · $budget", entity.archived, { archiveCategory(entity.id, !entity.archived) }, { requestCategoryDelete(entity) }, { editCategory(entity) }) }
+    items(state.allCategories, key = { "c${it.id}" }) { entity -> val budget=state.allBudgets.firstOrNull{it.id==entity.budgetId}?.name ?: "Без бюджета"; ManageRow("${entity.emoji}  ${entity.name}", (if(entity.kind == CategoryKind.INCOME) "Доход" else "Расход")+" · $budget", entity.archived, { archiveCategory(entity.id, !entity.archived) }, { requestCategoryDelete(entity) }, { editCategory(entity) }) }
     item { Spacer(Modifier.height(8.dp)); ManagementHeading("Бюджеты", "Новый бюджет") { onAdd(DialogKind.BUDGET) } }
     items(state.allBudgets, key = { "b${it.id}" }) { entity -> ManageRow(entity.name, entity.currency, entity.archived, { archiveBudget(entity.id, !entity.archived) }, { requestBudgetDelete(entity) }) }
     item {
@@ -404,16 +404,16 @@ fun FinanceScreen(onBack: () -> Unit) {
 }
 @Composable private fun CategoryDialog(state: FinanceUiState, dismiss: () -> Unit, save: (String,CategoryKind,Long?,String)->Unit) {
     var name by remember { mutableStateOf("") }; var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }; var budget by remember { mutableStateOf<Long?>(null) }; var emoji by remember { mutableStateOf("🛒") }; var submitted by remember { mutableStateOf(false) }
-    val nameError=if(submitted) requiredNameError(name) else null; val budgetError=if(submitted&&budget==null) "Выберите бюджет" else null
-    FormDialog("Новая категория", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null&&budget!=null) save(name,kind,budget,emoji) }) { Field("Название",name,error=nameError){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it}; SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it} }
+    val nameError=if(submitted) requiredNameError(name) else null
+    FormDialog("Новая категория", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null) save(name,kind,budget,emoji) }) { Field("Название",name,error=nameError){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}; ChoiceRow(listOf("Расход" to CategoryKind.EXPENSE,"Доход" to CategoryKind.INCOME),kind){kind=it}; BudgetAssignmentList(state.budgets,budget){budget=it} }
 }
 @Composable private fun EditCategoryDialog(state: FinanceUiState, category: CategoryEntity, dismiss: () -> Unit, save: (String,Long?,String)->Unit) {
     var name by remember(category.id) { mutableStateOf(category.name) }; var budget by remember(category.id) { mutableStateOf<Long?>(category.budgetId) }; var emoji by remember(category.id) { mutableStateOf(category.emoji) }; var submitted by remember(category.id) { mutableStateOf(false) }
-    val nameError=if(submitted) requiredNameError(name) else null; val budgetError=if(submitted&&budget==null) "Выберите бюджет" else null
-    FormDialog("Редактировать категорию", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null&&budget!=null) save(name,budget,emoji) }) {
+    val nameError=if(submitted) requiredNameError(name) else null
+    FormDialog("Редактировать категорию", state.error, dismiss, { submitted=true; if(requiredNameError(name)==null) save(name,budget,emoji) }) {
         Field("Название",name,error=nameError){name=it}; Text("Смайлик", color=FffMuted, fontSize=12.sp); EmojiPicker(emoji){emoji=it}
         Text(if(category.kind == CategoryKind.EXPENSE) "Категория расходов" else "Категория доходов", color=FffMuted, fontSize=12.sp)
-        SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it}
+        BudgetAssignmentList(state.budgets,budget){budget=it}
     }
 }
 @Composable private fun BudgetDialog(error:String?,dismiss:()->Unit,save:(String,String)->Unit){var name by remember{mutableStateOf("")};var currency by remember{mutableStateOf("RUB")};var submitted by remember{mutableStateOf(false)};val nameError=if(submitted) requiredNameError(name) else null;val currencyError=if(submitted) currencyFieldError(currency) else null;FormDialog("Новый бюджет",error,dismiss,{submitted=true;if(requiredNameError(name)==null&&currencyFieldError(currency)==null)save(name,currency)}){Field("Название",name,error=nameError){name=it};Field("Валюта",currency,FffInputKind.CURRENCY,"Три буквы, например RUB",currencyError){currency=it}}}
@@ -459,6 +459,16 @@ fun FinanceScreen(onBack: () -> Unit) {
 @Composable private fun Field(label:String,value:String,kind:FffInputKind=FffInputKind.TEXT,support:String?=null,error:String?=null,modifier:Modifier=Modifier,onChange:(String)->Unit)=FffTextInput(label,value,onChange,modifier=modifier,kind=kind,supportingText=support,error=error)
 @Composable private fun <T> ChoiceRow(values:List<Pair<String,T>>,selected:T,onSelect:(T)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){values.forEach{(label,value)->FffChoiceRow(selected==value,{onSelect(value)},label)}}
 @Composable private fun <T> SelectList(label:String, values:List<T>, selected:Long?, id:(T)->Long, name:(T)->String,error:String?=null,select:(Long)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,color=if(error==null)FffMuted else Color(0xFFFF7C9B),fontSize=12.sp); if(values.isEmpty()) Text("Нет доступных вариантов",color=Color(0xFFFF7C9B),fontSize=12.sp) else values.forEach{v->FffChoiceRow(selected==id(v),{select(id(v))},name(v))};error?.let{Text(it,color=Color(0xFFFF7C9B),fontSize=12.sp)}}
+
+@Composable private fun BudgetAssignmentList(values: List<BudgetEntity>, selected: Long?, select: (Long?) -> Unit) =
+    Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Бюджет", color = FffMuted, fontSize = 12.sp)
+        FffChoiceRow(selected == null, { select(null) }, "Без бюджета")
+        values.forEach { budget ->
+            FffChoiceRow(selected == budget.id, { select(budget.id) }, "${budget.name} · ${budget.currency}")
+        }
+        Text("Не учитывается в лимитах бюджетов", color = FffMuted, fontSize = 11.sp)
+    }
 
 internal val categoryEmoji = listOf(
     "🛒","🛍️","🧺","🍔","🍕","🍣","🍜","🥗","🍎","🥐","🍰","🍫","☕","🍵","🍺","🍷",

@@ -231,11 +231,27 @@ class FinanceViewModelTest {
         assertNull(store.entries.single().categoryId)
     }
 
-    @Test fun `category requires explicit budget`() = runTest(dispatcher) {
+    @Test fun `category can be created without budgets`() = runTest(dispatcher) {
         val model = FinanceViewModel(FakeStore(), dispatcher); advanceUntilIdle()
         var success:Boolean?=null
         model.createCategory("Food",CategoryKind.EXPENSE,null,"🍜"){success=it}
-        assertEquals(false,success); assertEquals("Выберите бюджет",model.state.value.error)
+        advanceUntilIdle()
+        assertEquals(true,success)
+        assertNull(model.state.value.error)
+        assertNull(model.state.value.expenseCategories.single().budgetId)
+    }
+
+    @Test fun `category can be moved to no budget`() = runTest(dispatcher) {
+        val store = FakeStore().apply {
+            budgetList += BudgetEntity(2, "Ежедневные", "RUB")
+            categories += CategoryEntity(9, "Еда", CategoryKind.EXPENSE, budgetId = 2, emoji = "🍔")
+        }
+        val model = FinanceViewModel(store, dispatcher); advanceUntilIdle()
+        var success:Boolean?=null
+        model.updateCategory(9, "Еда", null, "🍔") { success=it }
+        advanceUntilIdle()
+        assertEquals(true, success)
+        assertNull(model.state.value.expenseCategories.single().budgetId)
     }
 
     @Test fun `month switching reloads budget status and overspend`() = runTest(dispatcher) {
@@ -279,12 +295,13 @@ class FinanceViewModelTest {
         val rubBudget=BudgetEntity(1,"RUB budget","RUB"); val usdBudget=BudgetEntity(2,"USD budget","USD")
         val rubCategory=CategoryEntity(10,"Еда",CategoryKind.EXPENSE,budgetId=1)
         val usdCategory=CategoryEntity(11,"Food",CategoryKind.EXPENSE,budgetId=2)
-        val state=FinanceUiState(loading=false,accounts=listOf(AccountEntity(1,"RUB","RUB"),AccountEntity(2,"USD","USD")),expenseCategories=listOf(rubCategory,usdCategory),budgets=listOf(rubBudget,usdBudget))
+        val noBudgetCategory=CategoryEntity(12,"Подарки",CategoryKind.EXPENSE,budgetId=null)
+        val state=FinanceUiState(loading=false,accounts=listOf(AccountEntity(1,"RUB","RUB"),AccountEntity(2,"USD","USD")),expenseCategories=listOf(rubCategory,usdCategory,noBudgetCategory),budgets=listOf(rubBudget,usdBudget))
         val rubForm=OperationFormState(EntryKind.EXPENSE,1,10)
-        assertEquals(listOf(10L),rubForm.categories(state).map{it.id})
+        assertEquals(listOf(10L,12L),rubForm.categories(state).map{it.id})
         val usdForm=rubForm.selectSource(2,state)
         assertNull(usdForm.categoryId)
-        assertEquals(listOf(11L),usdForm.categories(state).map{it.id})
+        assertEquals(listOf(11L,12L),usdForm.categories(state).map{it.id})
         assertTrue(EntryKind.EXPENSE in availableEntryKinds(state))
         assertTrue(EntryKind.EXPENSE in availableEntryKinds(state.copy(budgets=listOf(rubBudget),expenseCategories=listOf(usdCategory))))
     }
@@ -408,8 +425,8 @@ private class FakeStore : FinanceStore {
     override suspend fun createBudget(name:String,currency:String):Long { val id=(budgetList.size+1).toLong();budgetList+=BudgetEntity(id,name,currency);return id }
     override suspend fun allocate(budgetId:Long,month:YearMonth,amountMinor:Long){allocations[budgetId to month]=amountMinor}
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long { val id=(accounts.size+1).toLong(); accounts += AccountEntity(id,name,currency.uppercase(),initialBalanceMinor); return id }
-    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId:Long, emoji:String): Long { val id=(categories.size+1).toLong(); categories += CategoryEntity(id,name,kind,budgetId=budgetId,emoji=emoji); return id }
-    override suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) { val index=categories.indexOfFirst{it.id==id}; categories[index]=categories[index].copy(name=name,budgetId=budgetId,emoji=emoji) }
+    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId:Long?, emoji:String): Long { val id=(categories.size+1).toLong(); categories += CategoryEntity(id,name,kind,budgetId=budgetId,emoji=emoji); return id }
+    override suspend fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String) { val index=categories.indexOfFirst{it.id==id}; categories[index]=categories[index].copy(name=name,budgetId=budgetId,emoji=emoji) }
     override suspend fun archiveAccount(id: Long, archived:Boolean) { val i=accounts.indexOfFirst{it.id==id}; accounts[i]=accounts[i].copy(archived=archived) }
     override suspend fun archiveCategory(id: Long, archived:Boolean) { val i=categories.indexOfFirst{it.id==id}; categories[i]=categories[i].copy(archived=archived) }
     override suspend fun archiveBudget(id: Long, archived:Boolean) { val i=budgetList.indexOfFirst{it.id==id}; budgetList[i]=budgetList[i].copy(archived=archived) }

@@ -47,8 +47,8 @@ internal interface FinanceStore {
     suspend fun createBudget(name: String, currency: String): Long
     suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long)
     suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long): Long
-    suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long, emoji: String): Long
-    suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String)
+    suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long?, emoji: String): Long
+    suspend fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String)
     suspend fun archiveAccount(id: Long, archived: Boolean)
     suspend fun archiveCategory(id: Long, archived: Boolean)
     suspend fun archiveBudget(id: Long, archived: Boolean)
@@ -75,8 +75,8 @@ internal class RepositoryFinanceStore(private val repository: FinanceRepository)
     override suspend fun createBudget(name: String, currency: String) = repository.createBudget(name, currency)
     override suspend fun allocate(budgetId: Long, month: YearMonth, amountMinor: Long) = repository.allocate(budgetId, month, amountMinor)
     override suspend fun createAccount(name: String, currency: String, initialBalanceMinor: Long) = repository.createAccount(name, currency, initialBalanceMinor)
-    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long, emoji: String) = repository.createCategory(name, kind, budgetId, emoji)
-    override suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) = repository.updateCategory(id, name, budgetId, emoji)
+    override suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long?, emoji: String) = repository.createCategory(name, kind, budgetId, emoji)
+    override suspend fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String) = repository.updateCategory(id, name, budgetId, emoji)
     override suspend fun archiveAccount(id: Long, archived: Boolean) = repository.archiveAccount(id, archived)
     override suspend fun archiveCategory(id: Long, archived: Boolean) = repository.archiveCategory(id, archived)
     override suspend fun archiveBudget(id: Long, archived: Boolean) = repository.archiveBudget(id, archived)
@@ -251,7 +251,7 @@ internal data class OperationFormState(
 internal fun expenseCategoriesFor(state: FinanceUiState, accountId: Long?): List<CategoryEntity> {
     val currency = state.accounts.firstOrNull { it.id == accountId }?.currency ?: return emptyList()
     val budgetIds = state.budgets.filter { it.currency == currency }.map { it.id }.toSet()
-    return state.expenseCategories.filter { it.budgetId in budgetIds }
+    return state.expenseCategories.filter { it.budgetId == null || it.budgetId in budgetIds }
 }
 
 internal fun availableEntryKinds(state: FinanceUiState): Set<EntryKind> = buildSet {
@@ -377,12 +377,10 @@ internal class FinanceViewModel(
     }
 
     fun createCategory(name: String, kind: CategoryKind, budgetId: Long?, emoji: String, done: (Boolean) -> Unit = {}) {
-        if (budgetId == null) return invalid("Выберите бюджет", done)
         launchAction(done = done) { store.createCategory(name, kind, budgetId, emoji); reloadCurrentState() }
     }
 
     fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String, done: (Boolean) -> Unit = {}) {
-        if (budgetId == null) return invalid("Выберите бюджет", done)
         launchAction(done = done) { store.updateCategory(id, name, budgetId, emoji); reloadCurrentState() }
     }
 

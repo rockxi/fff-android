@@ -34,7 +34,7 @@ internal interface FinanceDao {
     @Query("SELECT * FROM categories WHERE id = :id") suspend fun category(id: Long): CategoryEntity?
     @Query("SELECT * FROM categories WHERE kind = :kind AND (:includeArchived OR archived = 0) ORDER BY name") suspend fun categories(kind: CategoryKind, includeArchived: Boolean = false): List<CategoryEntity>
     @Query("UPDATE categories SET archived = :archived WHERE id = :id") suspend fun setCategoryArchived(id: Long, archived: Boolean): Int
-    @Query("UPDATE categories SET name = :name, budgetId = :budgetId, emoji = :emoji WHERE id = :id") suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String): Int
+    @Query("UPDATE categories SET name = :name, budgetId = :budgetId, emoji = :emoji WHERE id = :id") suspend fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String): Int
     @Query("SELECT DISTINCT accounts.currency FROM ledger_entries INNER JOIN accounts ON accounts.id = ledger_entries.accountId WHERE ledger_entries.categoryId = :id AND ledger_entries.kind = 'EXPENSE'")
     suspend fun categoryExpenseCurrencies(id: Long): List<String>
     @Query("DELETE FROM categories WHERE id = :id") suspend fun deleteCategory(id: Long): Int

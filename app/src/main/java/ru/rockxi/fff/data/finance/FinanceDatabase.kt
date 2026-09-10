@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [AccountEntity::class, BudgetEntity::class, BudgetAllocationEntity::class, CategoryEntity::class, LedgerEntryEntity::class], version = 3, exportSchema = false)
+@Database(entities = [AccountEntity::class, BudgetEntity::class, BudgetAllocationEntity::class, CategoryEntity::class, LedgerEntryEntity::class], version = 4, exportSchema = false)
 @TypeConverters(FinanceConverters::class)
 internal abstract class FinanceDatabase : RoomDatabase() {
     internal abstract fun financeDao(): FinanceDao
@@ -52,6 +52,17 @@ internal abstract class FinanceDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE categories ADD COLUMN emoji TEXT NOT NULL DEFAULT '🏷️'")
             }
         }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TRIGGER IF EXISTS ledger_entries_validate_insert")
+                db.execSQL("CREATE TABLE categories_v4 (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `archived` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `budgetId` INTEGER, `emoji` TEXT NOT NULL DEFAULT '🏷️', FOREIGN KEY(`budgetId`) REFERENCES `budgets`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT)")
+                db.execSQL("INSERT INTO categories_v4(id,name,kind,archived,createdAt,budgetId,emoji) SELECT id,name,kind,archived,createdAt,budgetId,emoji FROM categories")
+                db.execSQL("DROP TABLE categories")
+                db.execSQL("ALTER TABLE categories_v4 RENAME TO categories")
+                db.execSQL("CREATE INDEX index_categories_budgetId ON categories(budgetId)")
+                installInvariantTrigger(db)
+            }
+        }
         @Volatile private var instance: FinanceDatabase? = null
         private val invariantCallback = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) = seedBudgets(db)
@@ -71,14 +82,14 @@ internal abstract class FinanceDatabase : RoomDatabase() {
                       SELECT CASE WHEN NEW.amountMinor <= 0 THEN RAISE(ABORT, 'amount must be positive') END;
                       SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND NEW.transferAccountId IS NOT NULL THEN RAISE(ABORT, 'invalid categorized entry') END;
                       SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND NEW.categoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.categoryId AND kind = NEW.kind) THEN RAISE(ABORT, 'category kind mismatch') END;
-                      SELECT CASE WHEN NEW.kind = 'EXPENSE' AND NEW.categoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM categories c JOIN budgets b ON b.id = c.budgetId JOIN accounts a ON a.id = NEW.accountId WHERE c.id = NEW.categoryId AND b.currency = a.currency) THEN RAISE(ABORT, 'budget currency mismatch') END;
+                      SELECT CASE WHEN NEW.kind = 'EXPENSE' AND NEW.categoryId IS NOT NULL AND EXISTS (SELECT 1 FROM categories WHERE id = NEW.categoryId AND budgetId IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM categories c JOIN budgets b ON b.id = c.budgetId JOIN accounts a ON a.id = NEW.accountId WHERE c.id = NEW.categoryId AND b.currency = a.currency) THEN RAISE(ABORT, 'budget currency mismatch') END;
                       SELECT CASE WHEN NEW.kind = 'TRANSFER' AND (NEW.categoryId IS NOT NULL OR NEW.transferAccountId IS NULL OR NEW.accountId = NEW.transferAccountId) THEN RAISE(ABORT, 'invalid transfer') END;
                     END""".trimIndent(),
             )
         }
         fun get(context: Context): FinanceDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, FinanceDatabase::class.java, "fff-finance.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(invariantCallback).build().also { instance = it }
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).addCallback(invariantCallback).build().also { instance = it }
         }
 
         fun inMemory(context: Context): FinanceDatabase =

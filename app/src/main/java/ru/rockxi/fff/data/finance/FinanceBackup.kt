@@ -6,7 +6,7 @@ data class FinanceBackup(val formatVersion: Int = 1, val exportedAt: Long, val a
 data class BackupAccount(val id: Long, val name: String, val currency: String, val balanceMinor: Long, val archived: Boolean, val createdAt: Long)
 data class BackupBudget(val id: Long, val name: String, val currency: String, val archived: Boolean)
 data class BackupAllocation(val budgetId: Long, val month: String, val amountMinor: Long)
-data class BackupCategory(val id: Long, val name: String, val kind: String, val archived: Boolean, val createdAt: Long, val budgetId: Long, val emoji: String)
+data class BackupCategory(val id: Long, val name: String, val kind: String, val archived: Boolean, val createdAt: Long, val budgetId: Long?, val emoji: String)
 data class BackupEntry(val id: Long, val kind: String, val amountMinor: Long, val accountId: Long, val transferAccountId: Long?, val categoryId: Long?, val note: String, val occurredAt: Long)
 
 /** Explicit codec is the versioned, stable repository boundary for user-selected backup files. */
@@ -29,7 +29,7 @@ internal object FinanceBackupCodec {
             root.array("accounts").map { it.jsonObject.strict("id", "name", "currency", "balanceMinor", "archived", "createdAt").let { o -> BackupAccount(o.long("id"), o.text("name"), o.text("currency"), o.long("balanceMinor"), o.bool("archived"), o.long("createdAt")) } },
             root.array("budgets").map { it.jsonObject.strict("id", "name", "currency", "archived").let { o -> BackupBudget(o.long("id"), o.text("name"), o.text("currency"), o.bool("archived")) } },
             root.array("allocations").map { it.jsonObject.strict("budgetId", "month", "amountMinor").let { o -> BackupAllocation(o.long("budgetId"), o.text("month"), o.long("amountMinor")) } },
-            root.array("categories").map { it.jsonObject.strict("id", "name", "kind", "archived", "createdAt", "budgetId", "emoji").let { o -> BackupCategory(o.long("id"), o.text("name"), o.text("kind"), o.bool("archived"), o.long("createdAt"), o.long("budgetId"), o.text("emoji")) } },
+            root.array("categories").map { it.jsonObject.strict("id", "name", "kind", "archived", "createdAt", "budgetId", "emoji").let { o -> BackupCategory(o.long("id"), o.text("name"), o.text("kind"), o.bool("archived"), o.long("createdAt"), o.nullableLong("budgetId"), o.text("emoji")) } },
             root.array("entries").map { it.jsonObject.strict("id", "kind", "amountMinor", "accountId", "transferAccountId", "categoryId", "note", "occurredAt").let { o -> BackupEntry(o.long("id"), o.text("kind"), o.long("amountMinor"), o.long("accountId"), o.nullableLong("transferAccountId"), o.nullableLong("categoryId"), o.text("note"), o.long("occurredAt")) } },
         )
     }

@@ -34,23 +34,22 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
 
     suspend fun createCategory(name: String, kind: CategoryKind, budgetId: Long? = null, emoji: String = "🏷️"): Long {
         require(name.isNotBlank()) { "Category name is required" }
-        val selected = budgetId?.let { dao.budget(it) } ?: dao.budgetByName("Общие")
-        requireNotNull(selected) { "Budget not found" }
-        require(!selected.archived) { "Нельзя выбрать архивный бюджет" }
+        val selected = budgetId?.let { requireNotNull(dao.budget(it)) { "Budget not found" } }
+        require(selected?.archived != true) { "Нельзя выбрать архивный бюджет" }
         val normalizedEmoji = emoji.trim()
         require(validEmoji(normalizedEmoji)) { "Выберите один смайлик" }
-        return dao.insertCategory(CategoryEntity(name = name.trim(), kind = kind, budgetId = selected.id, emoji = normalizedEmoji))
+        return dao.insertCategory(CategoryEntity(name = name.trim(), kind = kind, budgetId = selected?.id, emoji = normalizedEmoji))
     }
 
-    suspend fun updateCategory(id: Long, name: String, budgetId: Long, emoji: String) = database.withTransaction {
+    suspend fun updateCategory(id: Long, name: String, budgetId: Long?, emoji: String) = database.withTransaction {
         require(name.isNotBlank()) { "Введите название категории" }
         val category = requireNotNull(dao.category(id)) { "Категория не найдена" }
         require(!category.archived) { "Сначала верните категорию из архива" }
-        val budget = requireNotNull(dao.budget(budgetId)) { "Бюджет не найден" }
-        require(!budget.archived) { "Нельзя выбрать архивный бюджет" }
+        val budget = budgetId?.let { requireNotNull(dao.budget(it)) { "Бюджет не найден" } }
+        require(budget?.archived != true) { "Нельзя выбрать архивный бюджет" }
         val normalizedEmoji = emoji.trim()
         require(validEmoji(normalizedEmoji)) { "Выберите один смайлик" }
-        if (category.kind == CategoryKind.EXPENSE) {
+        if (category.kind == CategoryKind.EXPENSE && budget != null) {
             require(dao.categoryExpenseCurrencies(id).all { it == budget.currency }) {
                 "Валюта нового бюджета не совпадает с валютой существующих расходов"
             }
@@ -173,7 +172,7 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         val budgetsById = budgets.associateBy { it.id }
         val accountsById = accounts.associateBy { it.id }
         val categories = backup.categories.map {
-            require(it.budgetId in budgetIds) { "Категория ссылается на отсутствующий бюджет" }
+            require(it.budgetId == null || it.budgetId in budgetIds) { "Категория ссылается на отсутствующий бюджет" }
             require(it.id != 0L && it.name.isNotBlank() && validEmoji(it.emoji)) { "Некорректная категория в копии" }
             CategoryEntity(it.id, it.name.trim(), parseCategoryKind(it.kind), it.archived, it.createdAt, it.budgetId, it.emoji.trim())
         }
@@ -198,7 +197,7 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
                     require(categoryId in categoryIds) { "Некорректная категория операции" }
                     val category = categoriesById.getValue(categoryId)
                     require(category.kind.name == kind.name) { "Тип категории операции не совпадает" }
-                    if (kind == EntryKind.EXPENSE) require(budgetsById.getValue(category.budgetId).currency == accountsById.getValue(it.accountId).currency) { "Валюта бюджета операции не совпадает" }
+                    if (kind == EntryKind.EXPENSE && category.budgetId != null) require(budgetsById.getValue(category.budgetId).currency == accountsById.getValue(it.accountId).currency) { "Валюта бюджета операции не совпадает" }
                 }
             }
             LedgerEntryEntity(it.id, kind, it.amountMinor, it.accountId, it.transferAccountId, it.categoryId, it.note, it.occurredAt)
@@ -227,7 +226,7 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         categoryId?.let {
             val category = requireNotNull(dao.category(it)) { "Category not found" }
             require(!category.archived && category.kind.name == kind.name) { "Category kind does not match entry" }
-            if (kind == EntryKind.EXPENSE) {
+            if (kind == EntryKind.EXPENSE && category.budgetId != null) {
                 val budget = requireNotNull(dao.budget(category.budgetId)) { "Budget not found" }
                 require(budget.currency == account.currency) { "Budget and account currencies must match" }
             }

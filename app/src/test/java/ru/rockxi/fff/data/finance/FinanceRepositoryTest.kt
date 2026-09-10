@@ -108,6 +108,26 @@ class FinanceRepositoryTest {
         assertEquals(2_000, repo.budgetStatus(daily.id, month.plusMonths(1), ZoneOffset.UTC).spentMinor)
     }
 
+    @Test fun categoryWithoutBudgetCanBeCreatedEditedAndDoesNotAffectBudgetTotals() = runBlocking {
+        val daily = repo.budgets().single { it.name == "Ежедневные" }
+        val account = repo.createAccount("Cash", "RUB", 10_000)
+        val category = repo.createCategory("Coffee", CategoryKind.EXPENSE, budgetId = null, emoji = "☕")
+        val month = YearMonth.of(2026, 9)
+        val occurredAt = month.atDay(3).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+        assertEquals(null, repo.categories(CategoryKind.EXPENSE).single { it.id == category }.budgetId)
+        repo.addExpense(account, category, 500, occurredAt = occurredAt)
+        assertEquals(9_500, repo.accounts().single { it.id == account }.balanceMinor)
+        assertEquals(500, repo.totals().expenseMinor)
+        assertEquals(0, repo.budgetStatus(daily.id, month, ZoneOffset.UTC).spentMinor)
+
+        repo.updateCategory(category, "Daily coffee", daily.id, "🥤")
+        assertEquals(daily.id, repo.categories(CategoryKind.EXPENSE).single { it.id == category }.budgetId)
+        repo.updateCategory(category, "Coffee", null, "☕")
+        assertEquals(null, repo.categories(CategoryKind.EXPENSE).single { it.id == category }.budgetId)
+        assertEquals(0, repo.budgetStatus(daily.id, month, ZoneOffset.UTC).spentMinor)
+    }
+
     @Test fun outOfBudgetIncomeAndExpenseChangeBalanceButNeverBudgetStatus() = runBlocking {
         val daily = repo.budgets().single { it.name == "Ежедневные" }
         val account = repo.createAccount("Cash", "RUB", 10_000)
@@ -187,12 +207,12 @@ class FinanceRepositoryTest {
         helper.close()
 
         val migrated = Room.databaseBuilder(context, FinanceDatabase::class.java, name)
-            .addMigrations(FinanceDatabase.MIGRATION_1_2, FinanceDatabase.MIGRATION_2_3).build()
+            .addMigrations(FinanceDatabase.MIGRATION_1_2, FinanceDatabase.MIGRATION_2_3, FinanceDatabase.MIGRATION_3_4).build()
         try {
             val dao = migrated.financeDao()
             assertEquals(900, dao.account(7)!!.balanceMinor)
             assertEquals("Food", dao.category(Long.MAX_VALUE)!!.name)
-            assertEquals(2, dao.category(Long.MAX_VALUE)!!.budgetId)
+            assertEquals(2L, dao.category(Long.MAX_VALUE)!!.budgetId)
             val migratedEntries = dao.entries()
             assertEquals(setOf(9L, 11L), migratedEntries.map { it.id }.toSet())
             assertEquals(setOf("old", "old-usd"), migratedEntries.map { it.note }.toSet())
@@ -203,12 +223,12 @@ class FinanceRepositoryTest {
             val rubCategory = dao.category(rubEntry.categoryId!!)!!
             val usdCategory = dao.category(usdEntry.categoryId!!)!!
             assertEquals(Long.MIN_VALUE + 1, usdCategory.id)
-            assertEquals("RUB", dao.budget(rubCategory.budgetId)!!.currency)
-            assertEquals("USD", dao.budget(usdCategory.budgetId)!!.currency)
+            assertEquals("RUB", dao.budget(rubCategory.budgetId!!)!!.currency)
+            assertEquals("USD", dao.budget(usdCategory.budgetId!!)!!.currency)
             val migratedRepo = FinanceRepository(migrated)
             val january1970 = YearMonth.of(1970, 1)
-            assertEquals(100, migratedRepo.budgetStatus(rubCategory.budgetId, january1970, ZoneOffset.UTC).spentMinor)
-            assertEquals(50, migratedRepo.budgetStatus(usdCategory.budgetId, january1970, ZoneOffset.UTC).spentMinor)
+            assertEquals(100, migratedRepo.budgetStatus(rubCategory.budgetId!!, january1970, ZoneOffset.UTC).spentMinor)
+            assertEquals(50, migratedRepo.budgetStatus(usdCategory.budgetId!!, january1970, ZoneOffset.UTC).spentMinor)
             assertDatabaseRejects {
                 dao.insertEntry(LedgerEntryEntity(kind = EntryKind.EXPENSE, amountMinor = 1, accountId = 10, categoryId = Long.MAX_VALUE))
             }
@@ -380,6 +400,20 @@ class FinanceRepositoryTest {
         assertEquals(entry, repo.entries().single { it.note == "ticket" }.id)
     }
 
+    @Test fun backupRoundTripPreservesCategoryWithoutBudget() = runBlocking {
+        val account = repo.createAccount("Wallet", "EUR", 1_000)
+        val category = repo.createCategory("Gift", CategoryKind.EXPENSE, budgetId = null, emoji = "🎁")
+        repo.addExpense(account, category, 125)
+
+        val document = repo.exportBackup()
+        assertTrue(document.contains("\"budgetId\": null"))
+        repo.restoreBackup(document)
+
+        assertEquals(null, repo.categories(CategoryKind.EXPENSE).single { it.id == category }.budgetId)
+        assertEquals(875, repo.accounts().single { it.id == account }.balanceMinor)
+        assertEquals(category, repo.entries().single().categoryId)
+    }
+
     @Test fun invalidBackupLeavesExistingDatabaseUntouched() = runBlocking {
         val account = repo.createAccount("Cash", "RUB", 500)
         val category = repo.createCategory("Food", CategoryKind.EXPENSE)
@@ -459,7 +493,7 @@ class FinanceRepositoryTest {
         helper.writableDatabase
         helper.close()
         val migrated = Room.databaseBuilder(context, FinanceDatabase::class.java, name)
-            .addMigrations(FinanceDatabase.MIGRATION_2_3).build()
+            .addMigrations(FinanceDatabase.MIGRATION_2_3, FinanceDatabase.MIGRATION_3_4).build()
         try {
             val migratedRepo = FinanceRepository(migrated)
             assertEquals("🏷️", migratedRepo.categories(CategoryKind.EXPENSE, true).single().emoji)
@@ -467,6 +501,54 @@ class FinanceRepositoryTest {
             assertFalse(migratedRepo.budgets(true).single().archived)
             assertEquals(11, migratedRepo.entries().single().id)
             assertEquals(50L, migrated.financeDao().allocation(8, "2026-09"))
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+            db = FinanceDatabase.inMemory(context)
+            repo = FinanceRepository(db)
+        }
+    }
+
+
+    @Test fun migrationFromV3PreservesBudgetAssignmentsAndAllowsNullBudget() = runBlocking {
+        db.close()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v3-v4-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context).name(name).callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                override fun onCreate(sql: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    sql.execSQL("CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, currency TEXT NOT NULL, balanceMinor INTEGER NOT NULL, archived INTEGER NOT NULL, createdAt INTEGER NOT NULL)")
+                    sql.execSQL("CREATE TABLE budgets (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, currency TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
+                    sql.execSQL("CREATE UNIQUE INDEX index_budgets_name ON budgets(name)")
+                    sql.execSQL("CREATE TABLE budget_allocations (budgetId INTEGER NOT NULL, month TEXT NOT NULL, amountMinor INTEGER NOT NULL, PRIMARY KEY(budgetId,month), FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE)")
+                    sql.execSQL("CREATE INDEX index_budget_allocations_budgetId ON budget_allocations(budgetId)")
+                    sql.execSQL("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, archived INTEGER NOT NULL, createdAt INTEGER NOT NULL, budgetId INTEGER NOT NULL DEFAULT 2, emoji TEXT NOT NULL DEFAULT '🏷️', FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE RESTRICT)")
+                    sql.execSQL("CREATE INDEX index_categories_budgetId ON categories(budgetId)")
+                    sql.execSQL("CREATE TABLE ledger_entries (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, amountMinor INTEGER NOT NULL, accountId INTEGER NOT NULL, transferAccountId INTEGER, categoryId INTEGER, note TEXT NOT NULL, occurredAt INTEGER NOT NULL, FOREIGN KEY(accountId) REFERENCES accounts(id) ON DELETE RESTRICT, FOREIGN KEY(transferAccountId) REFERENCES accounts(id) ON DELETE RESTRICT, FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE RESTRICT)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_accountId ON ledger_entries(accountId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_transferAccountId ON ledger_entries(transferAccountId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_categoryId ON ledger_entries(categoryId)")
+                    sql.execSQL("CREATE INDEX index_ledger_entries_occurredAt ON ledger_entries(occurredAt)")
+                    sql.execSQL("INSERT INTO budgets VALUES(8,'Legacy','EUR',0)")
+                    sql.execSQL("INSERT INTO accounts VALUES(9,'Cash','EUR',975,0,100)")
+                    sql.execSQL("INSERT INTO categories VALUES(10,'Food','EXPENSE',0,101,8,'🍝')")
+                    sql.execSQL("INSERT INTO ledger_entries VALUES(11,'EXPENSE',25,9,NULL,10,'meal',102)")
+                }
+                override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+            }).build(),
+        )
+        helper.writableDatabase
+        helper.close()
+        val migrated = Room.databaseBuilder(context, FinanceDatabase::class.java, name)
+            .addMigrations(FinanceDatabase.MIGRATION_3_4).build()
+        try {
+            val migratedRepo = FinanceRepository(migrated)
+            assertEquals(8L, migratedRepo.categories(CategoryKind.EXPENSE).single { it.id == 10L }.budgetId)
+            assertEquals(11L, migratedRepo.entries().single().id)
+            val noBudget = migratedRepo.createCategory("No budget", CategoryKind.EXPENSE, null, "🧾")
+            assertEquals(null, migratedRepo.categories(CategoryKind.EXPENSE).single { it.id == noBudget }.budgetId)
+            migratedRepo.addExpense(9, noBudget, 10)
+            assertEquals(10, migratedRepo.totals().expenseMinor - 25)
         } finally {
             migrated.close()
             context.deleteDatabase(name)

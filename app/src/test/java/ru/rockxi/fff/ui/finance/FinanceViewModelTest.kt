@@ -19,6 +19,7 @@ import org.junit.Test
 import ru.rockxi.fff.data.finance.*
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.LocalDate
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
@@ -58,6 +59,26 @@ class FinanceViewModelTest {
     @Test fun `operation day date uses zero padded absolute format`() {
         assertEquals("08.09.2026", formatOperationDayDate(java.time.LocalDate.of(2026, 9, 8)))
     }
+
+    @Test fun `analytics chart segments are normalized and colors stay stable`() {
+        val categories = listOf(
+            FinanceCategoryExpense(7, "Еда", "🍜", 750, 2),
+            FinanceCategoryExpense(11, "Такси", "🚕", 250, 1),
+            FinanceCategoryExpense(99, "Пусто", "📦", 0, 0),
+        )
+        val first = analyticsChartSegments(categories)
+        val second = analyticsChartSegments(categories.reversed())
+        assertEquals(2, first.size)
+        assertEquals(1f, first.sumOf { it.fraction.toDouble() }.toFloat(), .0001f)
+        assertEquals(.75f, first.first().fraction, .0001f)
+        assertEquals(first.associate { it.categoryId to it.colorIndex }, second.associate { it.categoryId to it.colorIndex })
+    }
+
+    @Test fun `custom analytics dates use strict day month year format`() {
+        assertEquals(LocalDate.of(2026, 9, 8), parseAnalyticsDate("08.09.2026"))
+        assertNull(parseAnalyticsDate("2026-09-08"))
+        assertNull(parseAnalyticsDate("31.02.2026"))
+    }
     private val dispatcher = StandardTestDispatcher()
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
@@ -94,6 +115,18 @@ class FinanceViewModelTest {
         assertEquals("Карта", model.state.value.accounts.single().name)
         assertEquals(10025L, model.state.value.accounts.single().balanceMinor)
         assertNull(model.state.value.error)
+    }
+
+    @Test fun `analytics defaults to month and rejects inverted custom dates`() = runTest(dispatcher) {
+        val store = FakeStore()
+        val model = FinanceViewModel(store, dispatcher)
+        advanceUntilIdle()
+        assertEquals(FinanceAnalyticsPreset.MONTH, model.state.value.analyticsRange.preset)
+        assertFalse(model.selectAnalyticsRange(LocalDate.of(2026, 9, 9), LocalDate.of(2026, 9, 8)))
+        assertEquals("Начальная дата не может быть позже конечной", model.state.value.error)
+        assertTrue(model.selectAnalyticsRange(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 8)))
+        advanceUntilIdle()
+        assertEquals(FinanceAnalyticsPreset.CUSTOM, model.state.value.analyticsReport?.range?.preset)
     }
 
     @Test fun `category update refreshes name emoji and budget while preserving kind`() = runTest(dispatcher) {
@@ -182,19 +215,20 @@ class FinanceViewModelTest {
             expenseCategories = listOf(CategoryEntity(1, "Еда", CategoryKind.EXPENSE, budgetId = 1)),
             budgets = listOf(BudgetEntity(1, "Общие", "RUB")),
         )
-        assertEquals(setOf(EntryKind.EXPENSE), availableEntryKinds(state))
+        assertEquals(setOf(EntryKind.INCOME, EntryKind.EXPENSE), availableEntryKinds(state))
         assertTrue(EntryKind.TRANSFER in availableEntryKinds(state.copy(accounts = state.accounts + AccountEntity(3, "RUB 2", "RUB"))))
     }
 
-    @Test fun `missing category returns form error without calling store`() = runTest(dispatcher) {
+    @Test fun `missing category records an out of budget expense`() = runTest(dispatcher) {
         val store = FakeStore().apply { accounts += AccountEntity(1, "Карта", "RUB") }
         val model = FinanceViewModel(store, dispatcher)
         advanceUntilIdle()
         var success: Boolean? = null
         model.addEntry(EntryKind.EXPENSE, "100", 1, null, null, "") { success = it }
-        assertEquals(false, success)
-        assertEquals("Выберите категорию", model.state.value.error)
-        assertTrue(store.entries.isEmpty())
+        advanceUntilIdle()
+        assertEquals(true, success)
+        assertNull(model.state.value.error)
+        assertNull(store.entries.single().categoryId)
     }
 
     @Test fun `category requires explicit budget`() = runTest(dispatcher) {
@@ -252,7 +286,7 @@ class FinanceViewModelTest {
         assertNull(usdForm.categoryId)
         assertEquals(listOf(11L),usdForm.categories(state).map{it.id})
         assertTrue(EntryKind.EXPENSE in availableEntryKinds(state))
-        assertTrue(EntryKind.EXPENSE !in availableEntryKinds(state.copy(budgets=listOf(rubBudget),expenseCategories=listOf(usdCategory))))
+        assertTrue(EntryKind.EXPENSE in availableEntryKinds(state.copy(budgets=listOf(rubBudget),expenseCategories=listOf(usdCategory))))
     }
 
     @Test fun `category grid always has four columns and keeps every category`() {
@@ -389,8 +423,12 @@ private class FakeStore : FinanceStore {
         output.writer().use { it.write("backup") }
     }
     override suspend fun restoreBackup(input: java.io.InputStream) { restoredDocument = input.reader().use { it.readText() } }
-    override suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long = add(EntryKind.INCOME,accountId,categoryId,null,amountMinor,note)
-    override suspend fun addExpense(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long = add(EntryKind.EXPENSE,accountId,categoryId,null,amountMinor,note)
+    override suspend fun analytics(range: FinanceAnalyticsRange): FinanceAnalyticsReport =
+        FinanceAnalyticsCalculator.calculate(entries, accounts, categories, range)
+    override suspend fun exportAnalytics(range: FinanceAnalyticsRange, format: FinanceReportExporter.Format): String =
+        FinanceReportExporter.export(analytics(range), format)
+    override suspend fun addIncome(accountId: Long, categoryId: Long?, amountMinor: Long, note: String): Long = add(EntryKind.INCOME,accountId,categoryId,null,amountMinor,note)
+    override suspend fun addExpense(accountId: Long, categoryId: Long?, amountMinor: Long, note: String): Long = add(EntryKind.EXPENSE,accountId,categoryId,null,amountMinor,note)
     override suspend fun transfer(fromAccountId: Long, toAccountId: Long, amountMinor: Long, note: String): Long = add(EntryKind.TRANSFER,fromAccountId,null,toAccountId,amountMinor,note)
     private fun add(kind:EntryKind,account:Long,category:Long?,target:Long?,amount:Long,note:String):Long { val id=(entries.size+1).toLong(); entries += LedgerEntryEntity(id,kind,amount,account,target,category,note); return id }
 }

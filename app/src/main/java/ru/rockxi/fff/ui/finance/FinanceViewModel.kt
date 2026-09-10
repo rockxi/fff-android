@@ -20,6 +20,10 @@ import ru.rockxi.fff.data.finance.CategoryKind
 import ru.rockxi.fff.data.finance.EntryKind
 import ru.rockxi.fff.data.finance.FinanceRepository
 import ru.rockxi.fff.data.finance.FinanceTotals
+import ru.rockxi.fff.data.finance.FinanceAnalyticsPreset
+import ru.rockxi.fff.data.finance.FinanceAnalyticsRange
+import ru.rockxi.fff.data.finance.FinanceAnalyticsReport
+import ru.rockxi.fff.data.finance.FinanceReportExporter
 import ru.rockxi.fff.data.finance.LedgerEntryEntity
 import ru.rockxi.fff.data.finance.BudgetEntity
 import ru.rockxi.fff.data.finance.BudgetStatus
@@ -54,8 +58,10 @@ internal interface FinanceStore {
     suspend fun deleteEntry(id: Long)
     suspend fun exportBackup(output: OutputStream)
     suspend fun restoreBackup(input: InputStream)
-    suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long
-    suspend fun addExpense(accountId: Long, categoryId: Long, amountMinor: Long, note: String): Long
+    suspend fun analytics(range: FinanceAnalyticsRange): FinanceAnalyticsReport
+    suspend fun exportAnalytics(range: FinanceAnalyticsRange, format: FinanceReportExporter.Format): String
+    suspend fun addIncome(accountId: Long, categoryId: Long?, amountMinor: Long, note: String): Long
+    suspend fun addExpense(accountId: Long, categoryId: Long?, amountMinor: Long, note: String): Long
     suspend fun transfer(fromAccountId: Long, toAccountId: Long, amountMinor: Long, note: String): Long
 }
 
@@ -80,8 +86,11 @@ internal class RepositoryFinanceStore(private val repository: FinanceRepository)
     override suspend fun deleteEntry(id: Long) = repository.deleteEntry(id)
     override suspend fun exportBackup(output: OutputStream) = repository.exportBackup(output)
     override suspend fun restoreBackup(input: InputStream) = repository.restoreBackup(input)
-    override suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String) = repository.addIncome(accountId, categoryId, amountMinor, note)
-    override suspend fun addExpense(accountId: Long, categoryId: Long, amountMinor: Long, note: String) = repository.addExpense(accountId, categoryId, amountMinor, note)
+    override suspend fun analytics(range: FinanceAnalyticsRange) = repository.analytics(range)
+    override suspend fun exportAnalytics(range: FinanceAnalyticsRange, format: FinanceReportExporter.Format) =
+        repository.exportAnalytics(range, format)
+    override suspend fun addIncome(accountId: Long, categoryId: Long?, amountMinor: Long, note: String) = repository.addIncome(accountId, categoryId, amountMinor, note)
+    override suspend fun addExpense(accountId: Long, categoryId: Long?, amountMinor: Long, note: String) = repository.addExpense(accountId, categoryId, amountMinor, note)
     override suspend fun transfer(fromAccountId: Long, toAccountId: Long, amountMinor: Long, note: String) = repository.transfer(fromAccountId, toAccountId, amountMinor, note)
 }
 
@@ -102,6 +111,10 @@ internal data class FinanceUiState(
     val error: String? = null,
     val notice: String? = null,
     val backupBusy: Boolean = false,
+    val analyticsRange: FinanceAnalyticsRange = FinanceAnalyticsRange.currentMonth(),
+    val analyticsReport: FinanceAnalyticsReport? = null,
+    val analyticsLoading: Boolean = true,
+    val analyticsExportBusy: Boolean = false,
 )
 
 internal data class BudgetCategoryBreakdown(
@@ -242,8 +255,12 @@ internal fun expenseCategoriesFor(state: FinanceUiState, accountId: Long?): List
 }
 
 internal fun availableEntryKinds(state: FinanceUiState): Set<EntryKind> = buildSet {
-    if (state.accounts.isNotEmpty() && state.incomeCategories.isNotEmpty()) add(EntryKind.INCOME)
-    if (state.accounts.any { account -> expenseCategoriesFor(state, account.id).isNotEmpty() }) add(EntryKind.EXPENSE)
+    // Income and expense can always be recorded using the built-in
+    // "Вне бюджета" choice, even before custom categories exist.
+    if (state.accounts.isNotEmpty()) {
+        add(EntryKind.EXPENSE)
+        add(EntryKind.INCOME)
+    }
     if (state.accounts.groupBy { it.currency }.any { it.value.size >= 2 }) add(EntryKind.TRANSFER)
 }
 
@@ -282,8 +299,10 @@ internal class FinanceViewModel(
     private val backupLock = Any()
     private var backupGeneration = 0L
     private var backupInFlight = false
+    private var analyticsJob: Job? = null
+    private var analyticsGeneration = 0L
 
-    init { refresh() }
+    init { refresh(); selectAnalyticsPreset(FinanceAnalyticsPreset.MONTH) }
 
     fun refresh() {
         loadJob?.cancel()
@@ -293,6 +312,64 @@ internal class FinanceViewModel(
         loadJob = launchAction(clearError = false) { loadState(month, generation) }
     }
     fun clearError() { mutableState.value = mutableState.value.copy(error = null, notice = null) }
+
+    fun selectAnalyticsPreset(preset: FinanceAnalyticsPreset, today: LocalDate = LocalDate.now()) {
+        require(preset != FinanceAnalyticsPreset.CUSTOM)
+        loadAnalytics(FinanceAnalyticsRange.preset(preset, today))
+    }
+
+    fun selectAnalyticsRange(startInclusive: LocalDate, endInclusive: LocalDate): Boolean {
+        if (startInclusive.isAfter(endInclusive)) {
+            mutableState.value = mutableState.value.copy(error = "Начальная дата не может быть позже конечной")
+            return false
+        }
+        loadAnalytics(FinanceAnalyticsRange.custom(startInclusive, endInclusive))
+        return true
+    }
+
+    private fun loadAnalytics(range: FinanceAnalyticsRange) {
+        analyticsJob?.cancel()
+        val generation = ++analyticsGeneration
+        mutableState.value = mutableState.value.copy(
+            analyticsRange = range,
+            analyticsLoading = true,
+            error = null,
+        )
+        analyticsJob = viewModelScope.launch {
+            try {
+                val report = withContext(io) { store.analytics(range) }
+                if (generation == analyticsGeneration) {
+                    mutableState.value = mutableState.value.copy(analyticsReport = report, analyticsLoading = false)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == analyticsGeneration) mutableState.value = mutableState.value.copy(
+                    analyticsLoading = false,
+                    error = error.message ?: "Не удалось загрузить аналитику",
+                )
+            }
+        }
+    }
+
+    fun exportAnalytics(format: FinanceReportExporter.Format, done: (String?) -> Unit) {
+        if (mutableState.value.analyticsExportBusy) return done(null)
+        val range = mutableState.value.analyticsRange
+        mutableState.value = mutableState.value.copy(analyticsExportBusy = true, error = null)
+        viewModelScope.launch {
+            var document: String? = null
+            try {
+                document = withContext(io) { store.exportAnalytics(range, format) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                mutableState.value = mutableState.value.copy(error = error.message ?: "Не удалось создать отчёт")
+            } finally {
+                mutableState.value = mutableState.value.copy(analyticsExportBusy = false)
+                done(document)
+            }
+        }
+    }
 
     fun createAccount(name: String, currency: String, opening: String, done: (Boolean) -> Unit = {}) {
         val amount = parseMoney(opening.ifBlank { "0" }) ?: return invalid("Введите корректный начальный баланс", done)
@@ -398,12 +475,11 @@ internal class FinanceViewModel(
     fun addEntry(kind: EntryKind, amount: String, accountId: Long?, categoryId: Long?, targetId: Long?, note: String, done: (Boolean) -> Unit = {}) {
         val minor = parseMoney(amount) ?: return invalid("Введите положительную сумму, например 1250,50", done)
         if (minor <= 0 || accountId == null) return invalid("Выберите счёт и укажите положительную сумму", done)
-        if (kind != EntryKind.TRANSFER && categoryId == null) return invalid("Выберите категорию", done)
         if (kind == EntryKind.TRANSFER && targetId == null) return invalid("Выберите счёт назначения", done)
         launchAction(done = done) {
             when (kind) {
-                EntryKind.INCOME -> store.addIncome(accountId, categoryId!!, minor, note)
-                EntryKind.EXPENSE -> store.addExpense(accountId, categoryId!!, minor, note)
+                EntryKind.INCOME -> store.addIncome(accountId, categoryId, minor, note)
+                EntryKind.EXPENSE -> store.addExpense(accountId, categoryId, minor, note)
                 EntryKind.TRANSFER -> store.transfer(accountId, targetId!!, minor, note)
             }
             reloadCurrentState()
@@ -428,6 +504,7 @@ internal class FinanceViewModel(
     private suspend fun reloadCurrentState() {
         val (month, generation) = synchronized(loadLock) { mutableState.value.selectedMonth to ++loadGeneration }
         loadState(month, generation)
+        loadAnalytics(mutableState.value.analyticsRange)
     }
 
     private suspend fun loadState(month: YearMonth, generation: Long) {
@@ -442,17 +519,23 @@ internal class FinanceViewModel(
         val allCategories = store.categories(CategoryKind.INCOME, true) + store.categories(CategoryKind.EXPENSE, true)
         val totals = store.totals()
         val summaries = currencySummaries(allAccounts, entries)
-        val loaded = FinanceUiState(
-            loading = false,
-            accounts = accounts, allAccounts = allAccounts,
-            incomeCategories = incomeCategories, expenseCategories = expenseCategories,
-            allCategories = allCategories,
-            entries = entries, totals = totals, currencySummaries = summaries,
-            budgets = budgets, allBudgets = allBudgets, budgetStatuses = statuses, selectedMonth = month, error = null,
-        )
         currentCoroutineContext().ensureActive()
         synchronized(loadLock) {
-            if (generation == loadGeneration && mutableState.value.selectedMonth == month) mutableState.value = loaded
+            if (generation == loadGeneration && mutableState.value.selectedMonth == month) mutableState.value = mutableState.value.copy(
+                loading = false,
+                accounts = accounts,
+                allAccounts = allAccounts,
+                incomeCategories = incomeCategories,
+                expenseCategories = expenseCategories,
+                allCategories = allCategories,
+                entries = entries,
+                totals = totals,
+                currencySummaries = summaries,
+                budgets = budgets,
+                allBudgets = allBudgets,
+                budgetStatuses = statuses,
+                error = null,
+            )
         }
     }
 

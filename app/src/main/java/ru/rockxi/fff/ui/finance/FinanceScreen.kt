@@ -118,7 +118,16 @@ fun FinanceScreen(onBack: () -> Unit) {
                     FinanceTab.OVERVIEW -> Overview(state, onAdd = ::openDialog)
                     FinanceTab.BUDGETS -> if (selectedBudgetId == null) Budgets(state, model::changeMonth, ::openDialog) { selectedBudgetId = it } else BudgetDetails(state, selectedBudgetId!!, { selectedBudgetId = null }) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
                     FinanceTab.OPERATIONS -> Operations(state) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
-                    FinanceTab.ANALYTICS -> Analytics(state)
+                    FinanceTab.ANALYTICS -> FinanceAnalyticsDashboard(
+                        state = state,
+                        onPreset = model::selectAnalyticsPreset,
+                        onCustom = model::selectAnalyticsRange,
+                        onExport = { format ->
+                            model.exportAnalytics(format) { document ->
+                                if (document != null) shareFinanceReport(context, format, document)
+                            }
+                        },
+                    )
                     FinanceTab.MANAGE -> Management(
                         state, ::openDialog,
                         archiveAccount = model::archiveAccount,
@@ -315,19 +324,6 @@ fun FinanceScreen(onBack: () -> Unit) {
     }
 }
 
-@Composable private fun Analytics(state: FinanceUiState) = LazyColumn(
-    Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 92.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
-) {
-    item { SectionTitle("За всё время") }
-    if (state.currencySummaries.isEmpty()) item { EmptyText("Создайте счёт, чтобы увидеть аналитику") }
-    state.currencySummaries.forEach { summary ->
-        item(key = "income-${summary.currency}") { MetricCard("ДОХОДЫ · ${summary.currency}", formatMoney(summary.incomeMinor, summary.currency), FffMint) }
-        item(key = "expense-${summary.currency}") { MetricCard("РАСХОДЫ · ${summary.currency}", formatMoney(summary.expenseMinor, summary.currency), Color(0xFFFF7C9B)) }
-        item(key = "net-${summary.currency}") { MetricCard("ДЕНЕЖНЫЙ ПОТОК · ${summary.currency}", formatMoney(summary.netMinor, summary.currency), FffViolet) }
-    }
-    item { Text("Переводы между счетами не входят в доходы и расходы.", color = FffMuted, fontSize = 13.sp, lineHeight = 19.sp) }
-}
-
 @Composable private fun Management(
     state: FinanceUiState,
     onAdd: (DialogKind) -> Unit,
@@ -379,7 +375,7 @@ fun FinanceScreen(onBack: () -> Unit) {
 }
 @Composable private fun EntryRow(e: LedgerEntryEntity, state: FinanceUiState, onDelete: (() -> Unit)? = null, showDate: Boolean = true) {
     val color = when(e.kind) { EntryKind.INCOME -> FffMint; EntryKind.EXPENSE -> Color(0xFFFF7C9B); EntryKind.TRANSFER -> FffViolet }
-    val title = when(e.kind) { EntryKind.TRANSFER -> "Перевод"; else -> state.allCategories.firstOrNull { it.id == e.categoryId }?.name ?: if(e.kind == EntryKind.INCOME) "Доход" else "Расход" }
+    val title = when(e.kind) { EntryKind.TRANSFER -> "Перевод"; else -> state.allCategories.firstOrNull { it.id == e.categoryId }?.name ?: "Вне бюджета" }
     val currency = state.allAccounts.firstOrNull { it.id == e.accountId }?.currency ?: "RUB"
     Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(14.dp)).padding(14.dp), verticalAlignment=Alignment.CenterVertically) {
         val pattern = if(showDate) "dd MMM, HH:mm" else "HH:mm"
@@ -432,11 +428,11 @@ fun FinanceScreen(onBack: () -> Unit) {
         amountFocusRequester.requestFocus()
         keyboardController?.show()
     }
-    val amountError=if(submitted)moneyFieldError(amount,allowZero=false) else null;val accountError=if(submitted&&form.accountId==null)"Выберите счёт" else null;val categoryError=if(submitted&&form.kind!=EntryKind.TRANSFER&&form.categoryId==null)"Выберите категорию" else null;val targetError=if(submitted&&form.kind==EntryKind.TRANSFER&&form.targetAccountId==null)"Выберите счёт назначения" else null
+    val amountError=if(submitted)moneyFieldError(amount,allowZero=false) else null;val accountError=if(submitted&&form.accountId==null)"Выберите счёт" else null;val categoryError:String?=null;val targetError=if(submitted&&form.kind==EntryKind.TRANSFER&&form.targetAccountId==null)"Выберите счёт назначения" else null
     fun submit(categoryId: Long? = form.categoryId) {
         submitted=true
         val valid = moneyFieldError(amount,allowZero=false)==null && form.accountId!=null &&
-            (form.kind==EntryKind.TRANSFER && form.targetAccountId!=null || form.kind!=EntryKind.TRANSFER && categoryId!=null)
+            (form.kind!=EntryKind.TRANSFER || form.targetAccountId!=null)
         if (valid && !saving) {
             saving=true
             save(form.kind,amount,form.accountId,categoryId,form.targetAccountId,note) { success -> if (!success) saving=false }
@@ -454,7 +450,7 @@ fun FinanceScreen(onBack: () -> Unit) {
         Field("Сумма",amount,FffInputKind.MONEY,"Например: 1250,50",amountError,Modifier.focusRequester(amountFocusRequester)){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name},accountError){form=form.selectSource(it,state)}
         if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name},targetError){form=form.copy(targetAccountId=it)}
         Field("Комментарий (необязательно)",note){note=it}
-        if(form.kind!=EntryKind.TRANSFER) CategoryTiles(cats, form.categoryId, categoryError) { categoryId -> form=form.copy(categoryId=categoryId); submit(categoryId) }
+        if(form.kind!=EntryKind.TRANSFER) CategoryTiles(cats, form.categoryId, categoryError, onOutOfBudget = { form=form.copy(categoryId=null); submit(null) }) { categoryId -> form=form.copy(categoryId=categoryId); submit(categoryId) }
         if(state.error!=null) Text(state.error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)
     } }
 }
@@ -489,19 +485,26 @@ internal val categoryEmoji = listOf(
     } }
 }
 
-@Composable private fun CategoryTiles(categories: List<CategoryEntity>, selected: Long?, error:String?=null,onSelect: (Long) -> Unit) = Column(Modifier.selectableGroup(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
+@Composable private fun CategoryTiles(categories: List<CategoryEntity>, selected: Long?, error:String?=null,onOutOfBudget: () -> Unit,onSelect: (Long) -> Unit) = Column(Modifier.selectableGroup(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text("Категория", color=FffMuted, fontSize=12.sp)
-    if(categories.isEmpty()) Text("Нет доступных категорий", color=Color(0xFFFF7C9B), fontSize=12.sp)
-    categoryGridRows(categories).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-        row.forEach { category -> Surface(
-            modifier=Modifier.weight(1f).heightIn(min=80.dp).semantics { contentDescription = "Категория ${category.name}" }.selectable(selected=selected==category.id,role=Role.RadioButton,onClick={onSelect(category.id)}),
+    val choices: List<CategoryEntity?> = listOf(null) + categories
+    choices.chunked(4).forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(7.dp)) {
+        row.forEach { category ->
+            val name = category?.name ?: "Вне бюджета"
+            val emoji = category?.emoji ?: "🧾"
+            Surface(
+            modifier=Modifier.weight(1f).heightIn(min=80.dp).semantics { contentDescription = "Категория $name" }.selectable(selected=false,role=Role.RadioButton,onClick={dispatchCategoryChoice(category,onOutOfBudget,onSelect)}),
             shape=RoundedCornerShape(14.dp),
-            color=if(selected==category.id) FffMint.copy(alpha=.18f) else FffSurface,
-            border=androidx.compose.foundation.BorderStroke(1.dp, if(selected==category.id) FffMint else FffLine),
-        ) { Box { Column(Modifier.fillMaxWidth().padding(horizontal=4.dp, vertical=10.dp), horizontalAlignment=Alignment.CenterHorizontally) { Text(category.emoji,fontSize=30.sp);Text(category.name,fontSize=10.sp,maxLines=2,overflow=TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center,modifier=Modifier.padding(top=4.dp)) }; FffSelectionBadge(selected==category.id,if(selected==category.id) "${category.name} выбрано" else "${category.name} не выбрано",Modifier.align(Alignment.TopEnd).padding(3.dp).size(20.dp)) } } }
+            color=FffSurface,
+            border=androidx.compose.foundation.BorderStroke(1.dp, if(category==null) FffMint.copy(alpha=.45f) else FffLine),
+        ) { Box { Column(Modifier.fillMaxWidth().padding(horizontal=4.dp, vertical=10.dp), horizontalAlignment=Alignment.CenterHorizontally) { Text(emoji,fontSize=30.sp);Text(name,fontSize=10.sp,maxLines=2,overflow=TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center,modifier=Modifier.padding(top=4.dp)) } } } }
         repeat(4-row.size) { Spacer(Modifier.weight(1f)) }
     } }
     error?.let { Text(it,color=Color(0xFFFF7C9B),fontSize=12.sp) }
+}
+
+internal fun dispatchCategoryChoice(category: CategoryEntity?, onOutOfBudget: () -> Unit, onSelect: (Long) -> Unit) {
+    if (category == null) onOutOfBudget() else onSelect(category.id)
 }
 
 private fun formatMoney(minor:Long,currencyCode:String="RUB"):String = runCatching { NumberFormat.getCurrencyInstance(Locale("ru","RU")).apply { currency=Currency.getInstance(currencyCode) }.format(BigDecimal.valueOf(minor,2)) }.getOrElse { "%.2f %s".format(minor/100.0,currencyCode) }

@@ -108,6 +108,43 @@ class FinanceRepositoryTest {
         assertEquals(2_000, repo.budgetStatus(daily.id, month.plusMonths(1), ZoneOffset.UTC).spentMinor)
     }
 
+    @Test fun outOfBudgetIncomeAndExpenseChangeBalanceButNeverBudgetStatus() = runBlocking {
+        val daily = repo.budgets().single { it.name == "Ежедневные" }
+        val account = repo.createAccount("Cash", "RUB", 10_000)
+        val month = YearMonth.of(2026, 9)
+        val occurredAt = month.atDay(10).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        repo.allocate(daily.id, month, 8_000)
+
+        repo.addIncome(account, null, 2_000, occurredAt = occurredAt)
+        repo.addExpense(account, null, 750, occurredAt = occurredAt)
+
+        assertEquals(11_250, repo.accounts().single { it.id == account }.balanceMinor)
+        assertTrue(repo.entries().filter { it.kind != EntryKind.TRANSFER }.all { it.categoryId == null })
+        val status = repo.budgetStatus(daily.id, month, ZoneOffset.UTC)
+        assertEquals(0, status.spentMinor)
+        assertEquals(8_000, status.remainingMinor)
+        val analytics = repo.analytics(
+            FinanceAnalyticsRange.custom(month.atDay(1), month.atEndOfMonth()),
+            ZoneOffset.UTC,
+        ).currencies.single()
+        assertEquals(750, analytics.expenseMinor)
+        assertEquals(OUT_OF_BUDGET_CATEGORY_NAME, analytics.expensesByCategory.single().categoryName)
+        assertEquals(OUT_OF_BUDGET_CATEGORY_EMOJI, analytics.expensesByCategory.single().emoji)
+    }
+
+    @Test fun backupRoundTripPreservesOutOfBudgetMarker() = runBlocking {
+        val account = repo.createAccount("Cash", "RUB", 1_000)
+        repo.addExpense(account, null, 125, "outside")
+        val document = repo.exportBackup()
+
+        repo.restoreBackup(document.byteInputStream())
+
+        val entry = repo.entries().single { it.note == "outside" }
+        assertEquals(EntryKind.EXPENSE, entry.kind)
+        assertEquals(null, entry.categoryId)
+        assertEquals(875, repo.accounts().single { it.id == account }.balanceMinor)
+    }
+
     @Test fun expenseRequiresAccountAndBudgetCurrencyMatch() = runBlocking {
         val rubBudget = repo.budgets().first()
         val usd = repo.createAccount("USD", "USD", 100)
@@ -241,16 +278,17 @@ class FinanceRepositoryTest {
         assertEquals(Long.MAX_VALUE, repo.totals().incomeMinor)
     }
 
-    @Test fun sqliteBoundaryRejectsMalformedRawDaoEntries() = runBlocking {
+    @Test fun sqliteBoundaryAllowsOutOfBudgetAndRejectsMalformedRawDaoEntries() = runBlocking {
         val account = repo.createAccount("Cash", "RUB")
         val category = repo.createCategory("Food", CategoryKind.EXPENSE)
         val dao = db.financeDao()
         assertDatabaseRejects { dao.insertEntry(LedgerEntryEntity(kind = EntryKind.EXPENSE, amountMinor = 0, accountId = account, categoryId = category)) }
-        assertDatabaseRejects { dao.insertEntry(LedgerEntryEntity(kind = EntryKind.INCOME, amountMinor = 1, accountId = account)) }
+        dao.insertEntry(LedgerEntryEntity(kind = EntryKind.INCOME, amountMinor = 1, accountId = account))
         assertDatabaseRejects { dao.insertEntry(LedgerEntryEntity(kind = EntryKind.INCOME, amountMinor = 1, accountId = account, categoryId = category)) }
         assertDatabaseRejects { dao.insertEntry(LedgerEntryEntity(kind = EntryKind.TRANSFER, amountMinor = 1, accountId = account, transferAccountId = account)) }
         assertDatabaseRejects { dao.insertEntry(LedgerEntryEntity(kind = EntryKind.TRANSFER, amountMinor = 1, accountId = account, transferAccountId = account + 1, categoryId = category)) }
-        assertTrue(dao.entries().isEmpty())
+        assertEquals(1, dao.entries().size)
+        assertEquals(null, dao.entries().single().categoryId)
     }
 
     @Test fun sqliteBoundaryRejectsUnknownEntryKind() = runBlocking {

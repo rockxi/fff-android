@@ -6,6 +6,7 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.io.InputStream
 import java.io.OutputStream
+import java.time.Clock
 
 data class BudgetStatus(val budget: BudgetEntity, val allocatedMinor: Long, val spentMinor: Long, val remainingMinor: Long)
 
@@ -192,10 +193,13 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
                 require(it.transferAccountId in accountIds && it.transferAccountId != it.accountId && it.categoryId == null) { "Некорректный перевод в копии" }
                 require(accountsById.getValue(it.accountId).currency == accountsById.getValue(it.transferAccountId!!).currency) { "Валюты перевода не совпадают" }
             } else {
-                require(it.categoryId in categoryIds && it.transferAccountId == null) { "Некорректная категория операции" }
-                val category = categoriesById.getValue(it.categoryId!!)
-                require(category.kind.name == kind.name) { "Тип категории операции не совпадает" }
-                if (kind == EntryKind.EXPENSE) require(budgetsById.getValue(category.budgetId).currency == accountsById.getValue(it.accountId).currency) { "Валюта бюджета операции не совпадает" }
+                require(it.transferAccountId == null) { "Некорректная категория операции" }
+                it.categoryId?.let { categoryId ->
+                    require(categoryId in categoryIds) { "Некорректная категория операции" }
+                    val category = categoriesById.getValue(categoryId)
+                    require(category.kind.name == kind.name) { "Тип категории операции не совпадает" }
+                    if (kind == EntryKind.EXPENSE) require(budgetsById.getValue(category.budgetId).currency == accountsById.getValue(it.accountId).currency) { "Валюта бюджета операции не совпадает" }
+                }
             }
             LedgerEntryEntity(it.id, kind, it.amountMinor, it.accountId, it.transferAccountId, it.categoryId, it.note, it.occurredAt)
         }
@@ -210,21 +214,23 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         }
     }
 
-    suspend fun addIncome(accountId: Long, categoryId: Long, amountMinor: Long, note: String = "", occurredAt: Long = System.currentTimeMillis()): Long =
+    suspend fun addIncome(accountId: Long, categoryId: Long?, amountMinor: Long, note: String = "", occurredAt: Long = System.currentTimeMillis()): Long =
         addCategorized(EntryKind.INCOME, accountId, categoryId, amountMinor, note, occurredAt)
 
-    suspend fun addExpense(accountId: Long, categoryId: Long, amountMinor: Long, note: String = "", occurredAt: Long = System.currentTimeMillis()): Long =
+    suspend fun addExpense(accountId: Long, categoryId: Long?, amountMinor: Long, note: String = "", occurredAt: Long = System.currentTimeMillis()): Long =
         addCategorized(EntryKind.EXPENSE, accountId, categoryId, amountMinor, note, occurredAt)
 
-    private suspend fun addCategorized(kind: EntryKind, accountId: Long, categoryId: Long, amountMinor: Long, note: String, occurredAt: Long): Long = database.withTransaction {
+    private suspend fun addCategorized(kind: EntryKind, accountId: Long, categoryId: Long?, amountMinor: Long, note: String, occurredAt: Long): Long = database.withTransaction {
         require(amountMinor > 0) { "Amount must be positive" }
         val account = requireNotNull(dao.account(accountId)) { "Account not found" }
         require(!account.archived) { "Account is archived" }
-        val category = requireNotNull(dao.category(categoryId)) { "Category not found" }
-        require(!category.archived && category.kind.name == kind.name) { "Category kind does not match entry" }
-        if (kind == EntryKind.EXPENSE) {
-            val budget = requireNotNull(dao.budget(category.budgetId)) { "Budget not found" }
-            require(budget.currency == account.currency) { "Budget and account currencies must match" }
+        categoryId?.let {
+            val category = requireNotNull(dao.category(it)) { "Category not found" }
+            require(!category.archived && category.kind.name == kind.name) { "Category kind does not match entry" }
+            if (kind == EntryKind.EXPENSE) {
+                val budget = requireNotNull(dao.budget(category.budgetId)) { "Budget not found" }
+                require(budget.currency == account.currency) { "Budget and account currencies must match" }
+            }
         }
         val delta = if (kind == EntryKind.INCOME) amountMinor else -amountMinor
         val balance = try { Math.addExact(account.balanceMinor, delta) } catch (_: ArithmeticException) {
@@ -261,6 +267,31 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
             expenseMinor = saturated(dao.amounts(EntryKind.EXPENSE, accountId, from, to)),
         )
     }
+
+    suspend fun analytics(
+        range: FinanceAnalyticsRange? = null,
+        zone: ZoneId = ZoneId.systemDefault(),
+        clock: Clock = Clock.system(zone),
+    ): FinanceAnalyticsReport {
+        val resolvedRange = range ?: FinanceAnalyticsRange.currentMonth(java.time.LocalDate.now(clock.withZone(zone)))
+        val from = resolvedRange.startInclusive?.atStartOfDay(zone)?.toInstant()?.toEpochMilli() ?: Long.MIN_VALUE
+        val to = resolvedRange.endInclusive?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()?.minus(1) ?: Long.MAX_VALUE
+        return FinanceAnalyticsCalculator.calculate(
+            entries = dao.entries(from = from, to = to),
+            accounts = dao.accounts(includeArchived = true),
+            categories = dao.categories(CategoryKind.INCOME, true) + dao.categories(CategoryKind.EXPENSE, true),
+            requestedRange = resolvedRange,
+            zone = zone,
+            clock = clock,
+        )
+    }
+
+    suspend fun exportAnalytics(
+        range: FinanceAnalyticsRange? = null,
+        format: FinanceReportExporter.Format,
+        zone: ZoneId = ZoneId.systemDefault(),
+        clock: Clock = Clock.system(zone),
+    ): String = FinanceReportExporter.export(analytics(range, zone, clock), format)
 
     private fun saturated(values: List<Long>): Long = values.fold(0L) { total, value ->
         if (Long.MAX_VALUE - total < value) Long.MAX_VALUE else total + value

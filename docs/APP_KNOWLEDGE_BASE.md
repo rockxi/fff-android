@@ -21,8 +21,11 @@ Finance code is split into:
 - `data/finance/FinanceRepository.kt` — transactional domain rules, balances, archive/delete and backup/restore.
 - `ui/finance/FinanceViewModel.kt` — asynchronous state loading and user actions.
 - `ui/finance/FinanceScreen.kt` — phone-first Compose UI.
+- `ui/finance/FinanceAnalyticsScreen.kt` — phone-first analytics dashboard and report sharing.
+- `data/finance/FinanceAnalytics.kt` — date presets, aggregate calculations and bounded CSV/JSON exports.
+- `data/finance/FinanceHarnessBridge.kt` — aggregate-only context passed to Harness on explicit opt-in.
 
-The database is `fff-finance.db` in application-private storage. Accounts hold the current balance. Income, expense and transfer entries update balances transactionally. Every category belongs to one budget; expense account currency must match the category budget currency. Monthly allocations are keyed by budget and `YYYY-MM`.
+The database is `fff-finance.db` in application-private storage. Accounts hold the current balance. Income, expense and transfer entries update balances transactionally. User-created categories belong to one budget; expense account currency must match the category budget currency. Income and expense entry also offer the built-in `Вне бюджета` choice. It is stored as a null ledger `categoryId`, not as a fake category or budget: it affects account balances, operation totals and general analytics, but never budget spending, allocation, remaining balance or budget details. Monthly allocations are keyed by budget and `YYYY-MM`.
 
 Archive is reversible and hides an object from normal pickers. Permanent deletion is explicit. Financial objects referenced by history must not disappear silently: delete the related operations first; deleting an operation reverses its balance effect transactionally.
 
@@ -36,26 +39,40 @@ retain an explicit save action because their final selector is a destination
 account rather than a category. While a save is in flight, repeated submission
 and dismissal are disabled.
 
-Backups are versioned JSON documents selected through Android Storage Access Framework. They contain all Finance tables, including archived objects and explicit IDs. Restore validates references and currencies, then replaces Finance data in one transaction. Backup jobs are serialized and their document streams are opened on the IO dispatcher; the UI prevents overlapping picker or backup operations. The file is user-controlled; no cloud storage is required.
+Backups are versioned JSON documents selected through Android Storage Access Framework. They contain all Finance tables, including archived objects and explicit IDs. A null `categoryId` on an income or expense round-trips as the built-in `Вне бюджета` marker. Restore validates present category references and currencies, then replaces Finance data in one transaction. Backup jobs are serialized and their document streams are opened on the IO dispatcher; the UI prevents overlapping picker or backup operations. The file is user-controlled; no cloud storage is required.
+
+Analytics defaults to the current local calendar month. Its inclusive presets are
+the current month, calendar quarter, calendar half-year, year and all time; the
+custom option validates explicit start and end dates. Transfers are excluded from
+income/expense aggregates. Results remain separated by currency and include
+income, expense, net flow, operation count, average expense per covered day, top
+category and expenses grouped by category. `Вне бюджета` expenses are represented
+as a synthetic analytics category while budget calculations continue to exclude
+them. The dashboard renders one donut and bounded, scrollable legend per currency.
+CSV and JSON exports are deterministic and size/count bounded. Files are written
+only to private cache and shared read-only through FileProvider; an analytics
+export is a report, not a restorable Finance backup.
 
 ## Harness
 
-Harness code is in `data/harness` and `ui/harness`. A short pairing code is approved by the owner in the Telegram AI topic. The resulting bearer token is stored with Android Keystore encryption. Revocation is durable.
+Harness code is in `data/harness` and `ui/harness`. Android authentication is
+independent from Telegram: the owner enters the server's
+`HARNESS_OWNER_ACCESS_KEY` once, the server exchanges it for a revocable bearer,
+and the access key is not persisted. The bearer is encrypted with Android
+Keystore and revocation is durable. The backend owner identity is the stable
+`FFF_OWNER_ID`; `BOT_OWNER_ID` is only a compatibility fallback for an optional
+Telegram adapter. When that adapter is enabled, `BOT_OWNER_ID` is mandatory,
+numeric and must be numerically equal to `FFF_OWNER_ID`.
 
 Harness is a server-backed multi-conversation client. Conversation metadata and
 message history are loaded from PostgreSQL through `HarnessApi`; ordinary
 conversations have independent agent/LangGraph contexts and can be created,
 renamed, archived, restored and deleted. History is fetched in bounded pages and
 rendered oldest-to-newest. `nextBefore` loads older pages without replacing
-visible messages. Source labels distinguish owner, agent and Telegram messages.
-
-The pinned immutable `EE` conversation is a bidirectional view of the exact
-Telegram topic configured by `/bind_ai_topic`. Sending supplies a stable UUID,
-returns pending after the backend's Telethon User API send, and polls history
-every three seconds only while EE is visible. Direct owner messages and Bot API
-responses appear in the same history. Polling merges by server message ID,
-preserves older pages/cursors and stops when the screen closes. Ordinary
-conversations wait for the agent response and do not poll Telegram.
+visible messages. The standalone Android list excludes legacy EE/Telegram
+conversations and needs no Telegram session, Bot API token or forum topic.
+Telegram can still be configured as an isolated backend adapter for the existing
+bot without becoming a dependency of the Harness API or Android client.
 
 Ordinary conversations can use either the existing agent provider or Codex backed
 by the owner's ChatGPT subscription. Codex device authorization runs on the FFF
@@ -71,9 +88,23 @@ Auth status and command responses are generation-checked so stale requests canno
 overwrite a newer login or logout. The model list is always loaded from the authenticated server allowlist;
 provider and model preferences are stored per conversation in private
 `SharedPreferences`, with a stale model falling back to the first currently
-allowed model. EE never exposes provider/model selection and always uses its
-Telegram path. Provider and model are also persisted with a pending send so an
+allowed model. Provider and model are also persisted with a pending send so an
 explicit retry preserves the backend's idempotency identity.
+
+Finance access is explicitly opt-in per Harness screen and defaults to off. The
+user chooses month, quarter, half-year, year, all time or a validated custom
+range. Android calculates the report from `fff-finance.db` and sends only strict,
+aggregate-only JSON: date bounds, per-currency totals and bounded category
+summaries. Raw ledger rows, comments, account balances, backups, credentials and
+tokens are excluded. The snapshot is size/date/count bounded and injected into
+the model request ephemerally; it is not appended to durable chat messages or
+LangGraph checkpoint history. A pending send persists the exact range and
+canonical snapshot, so retries and completed idempotent replays cannot switch the
+data being analyzed. If the assistant returns the allowlisted format-only export
+request, Android recreates CSV or JSON locally from the captured range and shares
+it with a fixed MIME type through the private FileProvider. The server never
+receives or writes the exported Finance file, and Finance Room remains the sole
+source of truth.
 
 Composer drafts live in private `SharedPreferences`, separately per
 conversation; they are not Finance SQLite data or part of Finance backups.
@@ -152,7 +183,11 @@ The updater is in `update/`. With explicit consent it reads the latest public Gi
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
-Version `0.9.3` (`versionCode 15`) adds the fast Finance operation-entry flow.
+Version `0.10.0` (`versionCode 16`) adds Finance analytics and bounded CSV/JSON
+reports, opt-in local Finance context and assistant-requested local exports in the
+standalone Harness, owner access-key authentication independent from Telegram,
+and the built-in `Вне бюджета` operation choice.
+It retains the fast Finance operation-entry flow from `0.9.3`.
 It retains the Harness composer fix from `0.9.2`, which combines
 `adjustNothing` with exactly one Compose IME inset. It retains the Codex
 subscription and Gym improvements from `0.9.0`,

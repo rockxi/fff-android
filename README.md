@@ -19,32 +19,45 @@ remains local during an in-place update.
   budgets can be changed safely without changing their income/expense type.
   Accounts, categories and budgets can be archived or safely deleted;
   deleting an operation reverses its balance effect. Versioned local JSON backups
-  can be exported and restored through Android's document picker. Every category
-  belongs to one budget; expense accounts and budgets must use the same currency.
+  can be exported and restored through Android's document picker. User-created
+  categories belong to one budget; expense accounts and budgets must use the same
+  currency. Income and expense forms also provide a built-in **Вне бюджета**
+  choice: those operations affect their account and general analytics, but never
+  a budget's spending or remaining amount.
   Operations are grouped by local calendar day and today's expenses are summarized
   separately for every currency.
+  Analytics opens on the current calendar month and shows a per-currency expense
+  donut, category legend, income, expense, net cash flow, operation count, daily
+  average and top category. Presets cover month, calendar quarter, calendar
+  half-year, year and all time; an inclusive custom date range is also available.
+  The displayed report can be shared as bounded CSV or JSON.
   Finance forms use cohesive dark, accessible controls with explicit selected and
   validation states, phone-sized touch targets and keyboard-aware scrolling.
-- **AI Harness** is a server-backed multi-conversation chat for the FFF assistant.
+- **AI Harness** is a standalone, server-backed multi-conversation chat for the
+  FFF assistant. A fresh install connects with the owner's FFF access key; the key
+  is exchanged for a revocable bearer token and is not retained on the phone.
   It restores history, keeps one draft per conversation, paginates older messages
-  and supports create, rename, archive/restore and delete actions. A pinned
-  immutable **EE** conversation mirrors the bound Telegram topic in both
-  directions: Harness posts from the owner's account through User API, while
-  direct owner messages and Bot API answers appear back in Android. Retries reuse
-  a stable UUID to prevent duplicates. Pair the device with the
-  short code shown in the app and approve it personally with `/pair CODE` in the
-  Telegram AI topic. The bearer credential is encrypted with Android Keystore.
-  Unpairing durably revokes it, and the app returns to pairing if the server reports
-  that the session has expired. Ordinary conversations can alternatively use
+  and supports create, rename, archive/restore and delete actions. Android does
+  not require Telegram, pairing commands or an EE topic; Telegram may remain
+  enabled separately on the server for the legacy bot. Retries reuse a stable UUID
+  to prevent duplicates. The bearer credential is encrypted with Android Keystore.
+  Disconnecting durably revokes it, and the app returns to access-key onboarding
+  if the server reports that the session has expired. Conversations can use
   Codex through the owner's ChatGPT subscription: the app shows a device code,
   opens the official HTTPS authorization page and then loads only the models from
   the server allowlist. The authorization action is shown only for the exact
   uncredentialed `https://auth.openai.com` origin. Provider/model choices and retry identity are kept per
-  conversation; OAuth credentials remain on the FFF server and EE always retains
-  its Telegram transport. The chat viewport applies keyboard insets once, keeping
+  conversation; OAuth credentials remain on the FFF server. The chat viewport
+  applies keyboard insets once, keeping
   the composer directly above the IME instead of lifting it by the keyboard height
   twice.
-- **Remote Control** uses the same paired Harness credential to manage owner-scoped
+  Finance context is off by default. When explicitly enabled for a chosen preset
+  or custom range, Android derives a bounded aggregate report from local SQLite and
+  attaches only totals and category statistics to that request. Raw operations,
+  backups and credentials are never sent. The assistant may request CSV or JSON;
+  Android then generates the file locally for the exact captured range and opens
+  the Sharesheet.
+- **Remote Control** uses the same Harness bearer credential to manage owner-scoped
   SSH profiles with password or private-key authentication and an optional single
   ProxyJump. It runs non-interactive terminal commands and starts background
   `codex exec --json` sessions whose status and retained output can be revisited

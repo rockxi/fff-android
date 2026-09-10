@@ -60,14 +60,18 @@ internal abstract class FinanceDatabase : RoomDatabase() {
             }
         }
         private fun installInvariantTrigger(db: SupportSQLiteDatabase) {
+            // Version 3 databases may contain the older trigger that required a
+            // category. Reinstall it on open; no table migration is needed
+            // because categoryId has always been nullable.
+            db.execSQL("DROP TRIGGER IF EXISTS ledger_entries_validate_insert")
             db.execSQL(
-                    """CREATE TRIGGER IF NOT EXISTS ledger_entries_validate_insert
+                    """CREATE TRIGGER ledger_entries_validate_insert
                     BEFORE INSERT ON ledger_entries BEGIN
                       SELECT CASE WHEN NEW.kind NOT IN ('INCOME','EXPENSE','TRANSFER') THEN RAISE(ABORT, 'invalid entry kind') END;
                       SELECT CASE WHEN NEW.amountMinor <= 0 THEN RAISE(ABORT, 'amount must be positive') END;
-                      SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND (NEW.categoryId IS NULL OR NEW.transferAccountId IS NOT NULL) THEN RAISE(ABORT, 'invalid categorized entry') END;
-                      SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.categoryId AND kind = NEW.kind) THEN RAISE(ABORT, 'category kind mismatch') END;
-                      SELECT CASE WHEN NEW.kind = 'EXPENSE' AND NOT EXISTS (SELECT 1 FROM categories c JOIN budgets b ON b.id = c.budgetId JOIN accounts a ON a.id = NEW.accountId WHERE c.id = NEW.categoryId AND b.currency = a.currency) THEN RAISE(ABORT, 'budget currency mismatch') END;
+                      SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND NEW.transferAccountId IS NOT NULL THEN RAISE(ABORT, 'invalid categorized entry') END;
+                      SELECT CASE WHEN NEW.kind IN ('INCOME','EXPENSE') AND NEW.categoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.categoryId AND kind = NEW.kind) THEN RAISE(ABORT, 'category kind mismatch') END;
+                      SELECT CASE WHEN NEW.kind = 'EXPENSE' AND NEW.categoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM categories c JOIN budgets b ON b.id = c.budgetId JOIN accounts a ON a.id = NEW.accountId WHERE c.id = NEW.categoryId AND b.currency = a.currency) THEN RAISE(ABORT, 'budget currency mismatch') END;
                       SELECT CASE WHEN NEW.kind = 'TRANSFER' AND (NEW.categoryId IS NOT NULL OR NEW.transferAccountId IS NULL OR NEW.accountId = NEW.transferAccountId) THEN RAISE(ABORT, 'invalid transfer') END;
                     END""".trimIndent(),
             )

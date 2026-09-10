@@ -26,7 +26,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -152,7 +155,12 @@ fun FinanceScreen(onBack: () -> Unit) {
         DialogKind.CATEGORY -> CategoryDialog(state, ::closeDialog) { name, kind, budget, emoji -> model.createCategory(name, kind, budget, emoji) { if (it) closeDialog() } }
         DialogKind.BUDGET -> BudgetDialog(state.error, ::closeDialog) { name, currency -> model.createBudget(name, currency) { if (it) closeDialog() } }
         DialogKind.ALLOCATION -> AllocationDialog(state, ::closeDialog) { budget, amount -> model.setAllocation(budget, amount) { if (it) closeDialog() } }
-        DialogKind.ENTRY -> EntryDialog(state, ::closeDialog) { kind, amount, account, category, target, note -> model.addEntry(kind, amount, account, category, target, note) { if (it) closeDialog() } }
+        DialogKind.ENTRY -> EntryDialog(state, ::closeDialog) { kind, amount, account, category, target, note, complete ->
+            model.addEntry(kind, amount, account, category, target, note) { success ->
+                complete(success)
+                if (success) closeDialog()
+            }
+        }
         null -> Unit
     }
     deleteRequest?.let { request ->
@@ -414,22 +422,45 @@ fun FinanceScreen(onBack: () -> Unit) {
 }
 @Composable private fun BudgetDialog(error:String?,dismiss:()->Unit,save:(String,String)->Unit){var name by remember{mutableStateOf("")};var currency by remember{mutableStateOf("RUB")};var submitted by remember{mutableStateOf(false)};val nameError=if(submitted) requiredNameError(name) else null;val currencyError=if(submitted) currencyFieldError(currency) else null;FormDialog("Новый бюджет",error,dismiss,{submitted=true;if(requiredNameError(name)==null&&currencyFieldError(currency)==null)save(name,currency)}){Field("Название",name,error=nameError){name=it};Field("Валюта",currency,FffInputKind.CURRENCY,"Три буквы, например RUB",currencyError){currency=it}}}
 @Composable private fun AllocationDialog(state:FinanceUiState,dismiss:()->Unit,save:(Long?,String)->Unit){var budget by remember{mutableStateOf<Long?>(state.budgets.firstOrNull()?.id)};var amount by remember{mutableStateOf("")};var submitted by remember{mutableStateOf(false)};val budgetError=if(submitted&&budget==null)"Выберите бюджет" else null;val amountError=if(submitted)moneyFieldError(amount,allowZero=true) else null;FormDialog("Бюджет на месяц",state.error,dismiss,{submitted=true;if(budget!=null&&moneyFieldError(amount,allowZero=true)==null)save(budget,amount)}){SelectList("Бюджет",state.budgets,budget,{it.id},{"${it.name} · ${it.currency}"},budgetError){budget=it};Field("Сумма",amount,FffInputKind.MONEY,"Например: 25000",amountError){amount=it}}}
-@Composable private fun EntryDialog(state: FinanceUiState, dismiss: () -> Unit, save:(EntryKind,String,Long?,Long?,Long?,String)->Unit) {
+@Composable private fun EntryDialog(state: FinanceUiState, dismiss: () -> Unit, save:(EntryKind,String,Long?,Long?,Long?,String,(Boolean)->Unit)->Unit) {
     val allowed = availableEntryKinds(state)
     var form by remember { mutableStateOf(OperationFormState(kind = allowed.firstOrNull() ?: EntryKind.EXPENSE, accountId = state.accounts.firstOrNull()?.id)) }; var amount by remember { mutableStateOf("") }; var note by remember { mutableStateOf("") }
-    val cats = form.categories(state); var submitted by remember { mutableStateOf(false) }
-    val amountError=if(submitted)moneyFieldError(amount,allowZero=false) else null;val accountError=if(submitted&&form.accountId==null)"Выберите счёт" else null;val categoryError=if(submitted&&form.kind!=EntryKind.TRANSFER&&form.categoryId==null)"Выберите категорию" else null;val targetError=if(submitted&&form.kind==EntryKind.TRANSFER&&form.targetAccountId==null)"Выберите счёт назначения" else null
-    FormDialog("Новая операция",state.error,dismiss,{submitted=true;if(moneyFieldError(amount,allowZero=false)==null&&form.accountId!=null&&(form.kind==EntryKind.TRANSFER&&form.targetAccountId!=null||form.kind!=EntryKind.TRANSFER&&form.categoryId!=null))save(form.kind,amount,form.accountId,form.categoryId,form.targetAccountId,note)}) {
-        ChoiceRow(listOf("Расход" to EntryKind.EXPENSE,"Доход" to EntryKind.INCOME,"Перевод" to EntryKind.TRANSFER).filter { it.second in allowed },form.kind){form=form.selectKind(it)}
-        Field("Сумма",amount,FffInputKind.MONEY,"Например: 1250,50",amountError){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name},accountError){form=form.selectSource(it,state)}
-        if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name},targetError){form=form.copy(targetAccountId=it)}
-        else CategoryTiles(cats, form.categoryId, categoryError) { form=form.copy(categoryId=it) }
-        Field("Комментарий (необязательно)",note){note=it}
+    val cats = form.categories(state); var submitted by remember { mutableStateOf(false) }; var saving by remember { mutableStateOf(false) }
+    val amountFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        amountFocusRequester.requestFocus()
+        keyboardController?.show()
     }
+    val amountError=if(submitted)moneyFieldError(amount,allowZero=false) else null;val accountError=if(submitted&&form.accountId==null)"Выберите счёт" else null;val categoryError=if(submitted&&form.kind!=EntryKind.TRANSFER&&form.categoryId==null)"Выберите категорию" else null;val targetError=if(submitted&&form.kind==EntryKind.TRANSFER&&form.targetAccountId==null)"Выберите счёт назначения" else null
+    fun submit(categoryId: Long? = form.categoryId) {
+        submitted=true
+        val valid = moneyFieldError(amount,allowZero=false)==null && form.accountId!=null &&
+            (form.kind==EntryKind.TRANSFER && form.targetAccountId!=null || form.kind!=EntryKind.TRANSFER && categoryId!=null)
+        if (valid && !saving) {
+            saving=true
+            save(form.kind,amount,form.accountId,categoryId,form.targetAccountId,note) { success -> if (!success) saving=false }
+        }
+    }
+    FffModal(
+        title="Новая операция",
+        onDismiss=dismiss,
+        confirmText=if(form.kind==EntryKind.TRANSFER) "Сохранить" else null,
+        onConfirm=if(form.kind==EntryKind.TRANSFER) ({ submit() }) else null,
+        confirmEnabled=!saving,
+        dismissEnabled=!saving,
+    ) { Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        ChoiceRow(listOf("Расход" to EntryKind.EXPENSE,"Доход" to EntryKind.INCOME,"Перевод" to EntryKind.TRANSFER).filter { it.second in allowed },form.kind){form=form.selectKind(it)}
+        Field("Сумма",amount,FffInputKind.MONEY,"Например: 1250,50",amountError,Modifier.focusRequester(amountFocusRequester)){amount=it}; SelectList("Счёт",state.accounts,form.accountId,{it.id},{it.name},accountError){form=form.selectSource(it,state)}
+        if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name},targetError){form=form.copy(targetAccountId=it)}
+        Field("Комментарий (необязательно)",note){note=it}
+        if(form.kind!=EntryKind.TRANSFER) CategoryTiles(cats, form.categoryId, categoryError) { categoryId -> form=form.copy(categoryId=categoryId); submit(categoryId) }
+        if(state.error!=null) Text(state.error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)
+    } }
 }
 
 @Composable private fun FormDialog(title:String,error:String?,dismiss:()->Unit,save:()->Unit,content:@Composable ColumnScope.()->Unit)=FffModal(title,dismiss,"Сохранить",save) { Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)){content(); if(error!=null) Text(error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)} }
-@Composable private fun Field(label:String,value:String,kind:FffInputKind=FffInputKind.TEXT,support:String?=null,error:String?=null,onChange:(String)->Unit)=FffTextInput(label,value,onChange,kind=kind,supportingText=support,error=error)
+@Composable private fun Field(label:String,value:String,kind:FffInputKind=FffInputKind.TEXT,support:String?=null,error:String?=null,modifier:Modifier=Modifier,onChange:(String)->Unit)=FffTextInput(label,value,onChange,modifier=modifier,kind=kind,supportingText=support,error=error)
 @Composable private fun <T> ChoiceRow(values:List<Pair<String,T>>,selected:T,onSelect:(T)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){values.forEach{(label,value)->FffChoiceRow(selected==value,{onSelect(value)},label)}}
 @Composable private fun <T> SelectList(label:String, values:List<T>, selected:Long?, id:(T)->Long, name:(T)->String,error:String?=null,select:(Long)->Unit)=Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,color=if(error==null)FffMuted else Color(0xFFFF7C9B),fontSize=12.sp); if(values.isEmpty()) Text("Нет доступных вариантов",color=Color(0xFFFF7C9B),fontSize=12.sp) else values.forEach{v->FffChoiceRow(selected==id(v),{select(id(v))},name(v))};error?.let{Text(it,color=Color(0xFFFF7C9B),fontSize=12.sp)}}
 

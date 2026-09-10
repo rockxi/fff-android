@@ -28,6 +28,14 @@ Archive is reversible and hides an object from normal pickers. Permanent deletio
 
 Categories have an emoji chosen from more than 150 distinct built-in choices. Active categories can be edited without changing their income/expense kind: name, emoji and budget are mutable. Moving an expense category with history is transactional and is accepted only when every linked expense account uses the destination budget currency. Archived budgets are never offered as edit targets.
 
+Opening the new-operation modal immediately focuses the amount field and requests
+the decimal keyboard. For income and expense operations, choosing a category is
+the final confirmation and saves immediately once amount/account validation
+passes; the optional comment therefore appears before the category grid. Transfers
+retain an explicit save action because their final selector is a destination
+account rather than a category. While a save is in flight, repeated submission
+and dismissal are disabled.
+
 Backups are versioned JSON documents selected through Android Storage Access Framework. They contain all Finance tables, including archived objects and explicit IDs. Restore validates references and currencies, then replaces Finance data in one transaction. Backup jobs are serialized and their document streams are opened on the IO dispatcher; the UI prevents overlapping picker or backup operations. The file is user-controlled; no cloud storage is required.
 
 ## Harness
@@ -144,7 +152,8 @@ The updater is in `update/`. With explicit consent it reads the latest public Gi
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
-Version `0.9.2` (`versionCode 14`) fixes the Harness composer by combining
+Version `0.9.3` (`versionCode 15`) adds the fast Finance operation-entry flow.
+It retains the Harness composer fix from `0.9.2`, which combines
 `adjustNothing` with exactly one Compose IME inset. It retains the Codex
 subscription and Gym improvements from `0.9.0`,
 `applicationId=ru.rockxi.fff`, the established signing identity and the existing

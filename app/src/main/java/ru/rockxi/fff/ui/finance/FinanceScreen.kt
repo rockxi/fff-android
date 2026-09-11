@@ -70,6 +70,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     var selectedBudgetId by remember { mutableStateOf<Long?>(null) }
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var editingCategory by remember { mutableStateOf<CategoryEntity?>(null) }
+    var editingEntry by remember { mutableStateOf<LedgerEntryEntity?>(null) }
     // Do not save a transient document grant across Activity recreation. If the
     // screen is recreated, the user selects the backup again instead of leaving
     // an invalid URI in saved state.
@@ -116,8 +117,8 @@ fun FinanceScreen(onBack: () -> Unit) {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = FffMint)
                 else -> AnimatedContent(tab, transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) }, label = "finance-tab") { selected -> when(selected) {
                     FinanceTab.OVERVIEW -> Overview(state, onAdd = ::openDialog)
-                    FinanceTab.BUDGETS -> if (selectedBudgetId == null) Budgets(state, model::changeMonth, ::openDialog) { selectedBudgetId = it } else BudgetDetails(state, selectedBudgetId!!, { selectedBudgetId = null }) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
-                    FinanceTab.OPERATIONS -> Operations(state) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
+                    FinanceTab.BUDGETS -> if (selectedBudgetId == null) Budgets(state, model::changeMonth, ::openDialog) { selectedBudgetId = it } else BudgetDetails(state, selectedBudgetId!!, { selectedBudgetId = null }, { editingEntry = it }) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
+                    FinanceTab.OPERATIONS -> Operations(state, { editingEntry = it }) { entry -> deleteRequest = DeleteRequest("Удалить операцию?", "Баланс счетов будет пересчитан. Отменить это действие нельзя.") { model.deleteEntry(entry.id) } }
                     FinanceTab.ANALYTICS -> FinanceAnalyticsDashboard(
                         state = state,
                         onPreset = model::selectAnalyticsPreset,
@@ -199,6 +200,11 @@ fun FinanceScreen(onBack: () -> Unit) {
             model.updateCategory(category.id, name, budget, emoji) { if (it) { model.clearError(); editingCategory = null } }
         }
     }
+    editingEntry?.let { entry ->
+        EditEntryDialog(state, entry, { model.clearError(); editingEntry = null }) { kind, amount, account, category, target, note, occurredAt ->
+            model.updateEntry(entry, kind, amount, account, category, target, note, occurredAt) { if (it) { model.clearError(); editingEntry = null } }
+        }
+    }
 }
 
 @Composable private fun Budgets(state: FinanceUiState, changeMonth: (Long) -> Unit, onAdd: (DialogKind) -> Unit, onBudget: (Long) -> Unit) = LazyColumn(
@@ -216,7 +222,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     items(state.budgetStatuses, key={ financeItemKey("budget", it.budget.id) }) { status -> BudgetCard(status) { onBudget(status.budget.id) } }
 }
 
-@Composable private fun BudgetDetails(state: FinanceUiState, budgetId: Long, onBack: () -> Unit, requestDelete: (LedgerEntryEntity) -> Unit) {
+@Composable private fun BudgetDetails(state: FinanceUiState, budgetId: Long, onBack: () -> Unit, edit: (LedgerEntryEntity) -> Unit, requestDelete: (LedgerEntryEntity) -> Unit) {
     val budget = state.allBudgets.firstOrNull { it.id == budgetId } ?: return
     val status = state.budgetStatuses.firstOrNull { it.budget.id == budgetId }
     val breakdown = remember(budgetId, state.selectedMonth, state.allCategories, state.entries) {
@@ -235,7 +241,7 @@ fun FinanceScreen(onBack: () -> Unit) {
             }
         }
         item(key = "budget-detail:operations-heading") { SectionTitle("Операции") }
-        items(breakdown.entries, key = { financeItemKey("budget-entry", it.id) }) { entry -> EntryRow(entry, state, { requestDelete(entry) }) }
+        items(breakdown.entries, key = { financeItemKey("budget-entry", it.id) }) { entry -> EntryRow(entry, state, { edit(entry) }, { requestDelete(entry) }) }
     }
 }
 
@@ -279,7 +285,7 @@ fun FinanceScreen(onBack: () -> Unit) {
     }
 }
 
-@Composable private fun Operations(state: FinanceUiState, onDelete: (LedgerEntryEntity) -> Unit) {
+@Composable private fun Operations(state: FinanceUiState, onEdit: (LedgerEntryEntity) -> Unit, onDelete: (LedgerEntryEntity) -> Unit) {
     val zone = remember { java.time.ZoneId.systemDefault() }
     var today by remember(zone) { mutableStateOf(java.time.LocalDate.now(zone)) }
     LaunchedEffect(zone) {
@@ -304,7 +310,7 @@ fun FinanceScreen(onBack: () -> Unit) {
         if (timeline.days.isEmpty()) item(key = "operations-empty") { EmptyText("Добавьте первую операцию кнопкой ниже") }
         timeline.days.forEach { day ->
             item(key = "operation-day:${day.date}") { DayHeading(day) }
-            items(day.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state, { onDelete(entry) }, showDate = false) }
+            items(day.entries, key = { financeItemKey("operation-entry", it.id) }) { entry -> EntryRow(entry, state, { onEdit(entry) }, { onDelete(entry) }, showDate = false) }
         }
     }
 }
@@ -373,7 +379,7 @@ fun FinanceScreen(onBack: () -> Unit) {
 @Composable private fun AccountCard(a: AccountEntity) = Row(Modifier.fillMaxWidth().background(FffSurface, RoundedCornerShape(15.dp)).border(1.dp, FffLine, RoundedCornerShape(15.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
     Icon(Icons.Rounded.CreditCard, null, tint = FffMint); Column(Modifier.padding(start=12.dp).weight(1f)) { Text(a.name, fontWeight=FontWeight.SemiBold, maxLines=1, overflow=TextOverflow.Ellipsis); Text(a.currency, color=FffMuted, fontSize=11.sp) }; Text(formatMoney(a.balanceMinor, a.currency), fontWeight=FontWeight.Bold)
 }
-@Composable private fun EntryRow(e: LedgerEntryEntity, state: FinanceUiState, onDelete: (() -> Unit)? = null, showDate: Boolean = true) {
+@Composable private fun EntryRow(e: LedgerEntryEntity, state: FinanceUiState, onEdit: (() -> Unit)? = null, onDelete: (() -> Unit)? = null, showDate: Boolean = true) {
     val color = when(e.kind) { EntryKind.INCOME -> FffMint; EntryKind.EXPENSE -> Color(0xFFFF7C9B); EntryKind.TRANSFER -> FffViolet }
     val title = when(e.kind) { EntryKind.TRANSFER -> "Перевод"; else -> state.allCategories.firstOrNull { it.id == e.categoryId }?.name ?: "Вне бюджета" }
     val currency = state.allAccounts.firstOrNull { it.id == e.accountId }?.currency ?: "RUB"
@@ -381,6 +387,7 @@ fun FinanceScreen(onBack: () -> Unit) {
         val pattern = if(showDate) "dd MMM, HH:mm" else "HH:mm"
         Column(Modifier.weight(1f)) { Text(title, maxLines=1, overflow=TextOverflow.Ellipsis); Text(SimpleDateFormat(pattern, Locale("ru")).format(Date(e.occurredAt)) + if(e.note.isBlank()) "" else " · ${e.note}", color=FffMuted, fontSize=11.sp, maxLines=1, overflow=TextOverflow.Ellipsis) }
         Text((if(e.kind==EntryKind.INCOME) "+" else if(e.kind==EntryKind.EXPENSE) "−" else "") + formatMoney(e.amountMinor, currency), color=color, fontWeight=FontWeight.Bold)
+        if(onEdit != null) IconButton(onClick=onEdit) { Icon(Icons.Rounded.Edit, "Редактировать", tint=FffMint) }
         if(onDelete != null) IconButton(onClick=onDelete) { Icon(Icons.Rounded.DeleteOutline, "Удалить", tint=Color(0xFFFF7C9B)) }
     }
 }
@@ -454,6 +461,39 @@ fun FinanceScreen(onBack: () -> Unit) {
         if(state.error!=null) Text(state.error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)
     } }
 }
+
+@Composable private fun EditEntryDialog(state: FinanceUiState, entry: LedgerEntryEntity, dismiss: () -> Unit, save:(EntryKind,String,Long?,Long?,Long?,String,Long)->Unit) {
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    var form by remember(entry.id) { mutableStateOf(OperationFormState(entry.kind, entry.accountId, entry.categoryId, entry.transferAccountId)) }
+    var amount by remember(entry.id) { mutableStateOf(BigDecimal.valueOf(entry.amountMinor, 2).stripTrailingZeros().toPlainString()) }
+    var note by remember(entry.id) { mutableStateOf(entry.note) }
+    var date by remember(entry.id, zone) { mutableStateOf(java.time.Instant.ofEpochMilli(entry.occurredAt).atZone(zone).toLocalDate().toString()) }
+    var submitted by remember(entry.id) { mutableStateOf(false) }
+    val amountError = if (submitted) moneyFieldError(amount, allowZero=false) else null
+    val dateError = if (submitted) operationDateError(date) else null
+    val accountError = if (submitted && form.accountId == null) "Выберите счёт" else null
+    val targetError = if (submitted && form.kind == EntryKind.TRANSFER && form.targetAccountId == null) "Выберите счёт назначения" else null
+    FffModal("Редактировать операцию", dismiss, "Сохранить", {
+        submitted = true
+        if (amountError == null && operationDateError(date) == null && form.accountId != null && (form.kind != EntryKind.TRANSFER || form.targetAccountId != null)) {
+            val localDate = java.time.LocalDate.parse(date)
+            val oldTime = java.time.Instant.ofEpochMilli(entry.occurredAt).atZone(zone).toLocalTime()
+            save(form.kind, amount, form.accountId, form.categoryId, form.targetAccountId, note, localDate.atTime(oldTime).atZone(zone).toInstant().toEpochMilli())
+        }
+    }) { Column(Modifier.fillMaxWidth(), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        ChoiceRow(listOf("Расход" to EntryKind.EXPENSE,"Доход" to EntryKind.INCOME,"Перевод" to EntryKind.TRANSFER), form.kind) { form = form.selectKind(it).selectSource(form.accountId, state) }
+        Field("Сумма", amount, FffInputKind.MONEY, error=amountError) { amount=it }
+        Field("Дата (ГГГГ-ММ-ДД)", date, support="Например: 2026-09-11", error=dateError) { date=it }
+        SelectList("Счёт", state.accounts, form.accountId, {it.id}, {it.name}, accountError) { form=form.selectSource(it,state) }
+        if(form.kind==EntryKind.TRANSFER) SelectList("Счёт назначения",form.transferTargets(state.accounts),form.targetAccountId,{it.id},{it.name},targetError){form=form.copy(targetAccountId=it)}
+        Field("Комментарий (необязательно)",note){note=it}
+        if(form.kind!=EntryKind.TRANSFER) CategoryTiles(form.categories(state), form.categoryId, onOutOfBudget={form=form.copy(categoryId=null)}) { form=form.copy(categoryId=it) }
+        state.error?.let { Text(it,color=Color(0xFFFF8DA8),fontSize=12.sp) }
+    } }
+}
+
+internal fun operationDateError(value: String): String? = runCatching { java.time.LocalDate.parse(value) }
+    .fold(onSuccess = { null }, onFailure = { "Введите дату в формате ГГГГ-ММ-ДД" })
 
 @Composable private fun FormDialog(title:String,error:String?,dismiss:()->Unit,save:()->Unit,content:@Composable ColumnScope.()->Unit)=FffModal(title,dismiss,"Сохранить",save) { Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)){content(); if(error!=null) Text(error,color=Color(0xFFFF8DA8),fontSize=12.sp,lineHeight=17.sp)} }
 @Composable private fun Field(label:String,value:String,kind:FffInputKind=FffInputKind.TEXT,support:String?=null,error:String?=null,modifier:Modifier=Modifier,onChange:(String)->Unit)=FffTextInput(label,value,onChange,modifier=modifier,kind=kind,supportingText=support,error=error)

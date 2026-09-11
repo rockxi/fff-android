@@ -434,6 +434,11 @@ private class FakeStore : FinanceStore {
     override suspend fun deleteCategory(id: Long) { categories.removeAll { it.id == id } }
     override suspend fun deleteBudget(id: Long) { budgetList.removeAll { it.id == id } }
     override suspend fun deleteEntry(id: Long) { entries.removeAll { it.id == id } }
+    override suspend fun updateEntry(id: Long, kind: EntryKind, accountId: Long, categoryId: Long?, transferAccountId: Long?, amountMinor: Long, note: String, occurredAt: Long): Long {
+        val index = entries.indexOfFirst { it.id == id }
+        entries[index] = LedgerEntryEntity(id, kind, amountMinor, accountId, transferAccountId, categoryId, note, occurredAt)
+        return id
+    }
     override suspend fun exportBackup(output: java.io.OutputStream) {
         exportStarted.complete(Unit)
         exportGate?.await()

@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,6 +45,10 @@ fun UpdatePrompt(
     }
     var consentPromptDismissed by remember { mutableStateOf(false) }
     var checkRequested by remember { mutableStateOf(automaticChecksEnabled) }
+    var manualCheck by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var noUpdateFound by remember { mutableStateOf(false) }
+    var checkFailed by remember { mutableStateOf(false) }
     var availableRelease by remember { mutableStateOf<GitHubRelease?>(null) }
     var dismissed by remember { mutableStateOf(false) }
     var promptState by remember { mutableStateOf(UpdatePromptState()) }
@@ -75,16 +80,47 @@ fun UpdatePrompt(
         }
     }
 
-    LaunchedEffect(checkRequested, currentVersion, gate) {
-        if (!checkRequested) return@LaunchedEffect
-        availableRelease = withContext(Dispatchers.IO) {
-            gate.findUpdate(currentVersion, userOptedIn = automaticChecksEnabled)
+    LaunchedEffect(checkRequested, UpdateRequests.generation, currentVersion, gate) {
+        val explicitlyRequested = UpdateRequests.generation > 0 && UpdateRequests.generation != UpdateRequests.consumedGeneration
+        if (!checkRequested && !explicitlyRequested) return@LaunchedEffect
+        if (explicitlyRequested) {
+            UpdateRequests.consumedGeneration = UpdateRequests.generation
+            manualCheck = true
+            dismissed = false
+            promptState = UpdatePromptState()
         }
+        checking = true
+        noUpdateFound = false
+        checkFailed = false
+        if (explicitlyRequested) {
+            when (val result = withContext(Dispatchers.IO) { gate.check(currentVersion) }) {
+                is UpdateCheckResult.Available -> availableRelease = result.release
+                UpdateCheckResult.Current -> { availableRelease = null; noUpdateFound = true }
+                UpdateCheckResult.Failed -> { availableRelease = null; checkFailed = true }
+            }
+        } else {
+            availableRelease = withContext(Dispatchers.IO) {
+                gate.findUpdate(currentVersion, userOptedIn = automaticChecksEnabled)
+            }
+        }
+        checking = false
         checkRequested = false
     }
 
     val release = availableRelease
-    if (!automaticChecksEnabled && !consentPromptDismissed) {
+    if (checking && manualCheck) {
+        FffModal(title = "Проверка обновлений", onDismiss = {}, confirmText = null, dismissEnabled = false) {
+            Column { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Ищем новую версию…", Modifier.padding(top = 12.dp)) }
+        }
+    } else if (noUpdateFound) {
+        FffModal(title = "Обновлений нет", onDismiss = { noUpdateFound = false; manualCheck = false }, confirmText = "Хорошо", onConfirm = { noUpdateFound = false; manualCheck = false }) {
+            Text("У вас установлена актуальная версия FFF ($currentVersion).")
+        }
+    } else if (checkFailed) {
+        FffModal(title = "Не удалось проверить", onDismiss = { checkFailed = false; manualCheck = false }, confirmText = "Повторить", onConfirm = { checkFailed = false; UpdateRequests.requestCheck() }) {
+            Text("Проверьте подключение к интернету и попробуйте ещё раз.")
+        }
+    } else if (!automaticChecksEnabled && !consentPromptDismissed && !manualCheck) {
         FffModal(
             title = "Проверять обновления?",
             onDismiss = { consentPromptDismissed = true },
@@ -166,6 +202,14 @@ fun UpdatePrompt(
             }
         }
     }
+}
+
+/** Process-local signal from the launcher to the Activity-level update prompt. */
+object UpdateRequests {
+    var generation by mutableLongStateOf(0L)
+        private set
+    internal var consumedGeneration: Long = 0L
+    fun requestCheck() { generation += 1 }
 }
 
 private const val PREFERENCES_NAME = "update_preferences"

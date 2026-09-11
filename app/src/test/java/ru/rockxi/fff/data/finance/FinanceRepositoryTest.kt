@@ -259,6 +259,40 @@ class FinanceRepositoryTest {
         assertEquals(2_000, totals.expenseMinor)
     }
 
+    @Test fun updateEntryChangesFieldsDateAndBalancesAtomically() = runBlocking {
+        val cash = repo.createAccount("Cash", "RUB", 10_000)
+        val bank = repo.createAccount("Bank", "RUB", 1_000)
+        val food = repo.createCategory("Food", CategoryKind.EXPENSE)
+        val salary = repo.createCategory("Salary", CategoryKind.INCOME)
+        val original = repo.addExpense(cash, food, 2_000, "old", occurredAt = 100)
+
+        val replacement = repo.updateEntry(original, EntryKind.INCOME, bank, salary, null, 3_000, "edited", 999)
+
+        assertEquals(10_000, repo.accounts().single { it.id == cash }.balanceMinor)
+        assertEquals(4_000, repo.accounts().single { it.id == bank }.balanceMinor)
+        val entry = repo.entries().single()
+        assertEquals(replacement, entry.id)
+        assertEquals(EntryKind.INCOME, entry.kind)
+        assertEquals(999, entry.occurredAt)
+        assertEquals("edited", entry.note)
+    }
+
+    @Test fun failedEntryUpdateRestoresOriginalEntryAndBalances() = runBlocking {
+        val cash = repo.createAccount("Cash", "RUB", 10_000)
+        val usd = repo.createAccount("USD", "USD", 5_000)
+        val food = repo.createCategory("Food", CategoryKind.EXPENSE)
+        val original = repo.addExpense(cash, food, 2_000, "original", occurredAt = 100)
+
+        assertFails { repo.updateEntry(original, EntryKind.TRANSFER, cash, null, usd, 3_000, "invalid", 999) }
+
+        assertEquals(8_000, repo.accounts().single { it.id == cash }.balanceMinor)
+        assertEquals(5_000, repo.accounts().single { it.id == usd }.balanceMinor)
+        val entry = repo.entries().single()
+        assertEquals(original, entry.id)
+        assertEquals("original", entry.note)
+        assertEquals(100, entry.occurredAt)
+    }
+
     @Test fun rejectsInvalidAmountCurrencyAndTransfer() = runBlocking {
         assertFails { repo.createAccount("Cash", "not-money") }
         val rub = repo.createAccount("RUB", "RUB")

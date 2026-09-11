@@ -42,4 +42,16 @@ class UpdateCheckGate(private val source: ReleaseSource) {
             .getOrNull()
             ?.takeIf { it.version > installed }
     }
+
+    fun check(currentVersion: String): UpdateCheckResult {
+        val installed = SemVer.parse(currentVersion) ?: return UpdateCheckResult.Failed
+        val latest = runCatching { source.getLatestRelease() }.getOrNull() ?: return UpdateCheckResult.Failed
+        return if (latest.version > installed) UpdateCheckResult.Available(latest) else UpdateCheckResult.Current
+    }
+}
+
+sealed interface UpdateCheckResult {
+    data class Available(val release: GitHubRelease) : UpdateCheckResult
+    data object Current : UpdateCheckResult
+    data object Failed : UpdateCheckResult
 }

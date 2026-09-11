@@ -56,6 +56,7 @@ internal interface FinanceStore {
     suspend fun deleteCategory(id: Long)
     suspend fun deleteBudget(id: Long)
     suspend fun deleteEntry(id: Long)
+    suspend fun updateEntry(id: Long, kind: EntryKind, accountId: Long, categoryId: Long?, transferAccountId: Long?, amountMinor: Long, note: String, occurredAt: Long): Long
     suspend fun exportBackup(output: OutputStream)
     suspend fun restoreBackup(input: InputStream)
     suspend fun analytics(range: FinanceAnalyticsRange): FinanceAnalyticsReport
@@ -84,6 +85,7 @@ internal class RepositoryFinanceStore(private val repository: FinanceRepository)
     override suspend fun deleteCategory(id: Long) = repository.deleteCategory(id)
     override suspend fun deleteBudget(id: Long) = repository.deleteBudget(id)
     override suspend fun deleteEntry(id: Long) = repository.deleteEntry(id)
+    override suspend fun updateEntry(id: Long, kind: EntryKind, accountId: Long, categoryId: Long?, transferAccountId: Long?, amountMinor: Long, note: String, occurredAt: Long) = repository.updateEntry(id, kind, accountId, categoryId, transferAccountId, amountMinor, note, occurredAt)
     override suspend fun exportBackup(output: OutputStream) = repository.exportBackup(output)
     override suspend fun restoreBackup(input: InputStream) = repository.restoreBackup(input)
     override suspend fun analytics(range: FinanceAnalyticsRange) = repository.analytics(range)
@@ -411,6 +413,15 @@ internal class FinanceViewModel(
     fun deleteCategory(id: Long) = launchAction { store.deleteCategory(id); reloadCurrentState() }
     fun deleteBudget(id: Long) = launchAction { store.deleteBudget(id); reloadCurrentState() }
     fun deleteEntry(id: Long) = launchAction { store.deleteEntry(id); reloadCurrentState() }
+
+    fun updateEntry(entry: LedgerEntryEntity, kind: EntryKind, amount: String, accountId: Long?, categoryId: Long?, targetAccountId: Long?, note: String, occurredAt: Long, done: (Boolean) -> Unit = {}) {
+        launchAction(done = done) {
+            val source = requireNotNull(accountId) { "Выберите счёт" }
+            val minor = requireNotNull(parseMoney(amount)) { "Введите корректную сумму" }
+            store.updateEntry(entry.id, kind, source, categoryId, targetAccountId, minor, note, occurredAt)
+            reloadCurrentState()
+        }
+    }
 
     fun createBackup(openOutput: () -> OutputStream?, done: (Boolean) -> Unit = {}): Boolean {
         val generation = beginBackup() ?: run { done(false); return false }

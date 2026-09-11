@@ -25,6 +25,8 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.FitnessCenter
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,6 +50,7 @@ import ru.rockxi.fff.ui.theme.FffMuted
 import ru.rockxi.fff.ui.theme.FffSurface
 import ru.rockxi.fff.ui.theme.FffText
 import ru.rockxi.fff.ui.theme.FffViolet
+import ru.rockxi.fff.update.UpdateRequests
 
 @Composable
 fun LauncherScreen(onOpen: (Destination) -> Unit) {
@@ -69,6 +72,14 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
         AppCatalog.applications.forEachIndexed { index, app ->
             AppCard(app = app, number = index + 1, onClick = { onOpen(app.destination) })
             Spacer(Modifier.height(14.dp))
+        }
+        OutlinedButton(
+            onClick = UpdateRequests::requestCheck,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Icon(Icons.Rounded.SystemUpdate, contentDescription = null)
+            Text("Проверить обновления", modifier = Modifier.padding(start = 8.dp))
         }
         Text("●  LOCAL FIRST  ·  PRIVATE BY DESIGN", color = FffMint.copy(alpha = .7f), fontSize = 10.sp,
             fontFamily = FontFamily.Monospace, letterSpacing = 1.sp, modifier = Modifier.padding(vertical = 12.dp))

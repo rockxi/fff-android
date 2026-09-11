@@ -2,6 +2,7 @@ package ru.rockxi.fff.update
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateCheckGateTest {
@@ -38,6 +39,12 @@ class UpdateCheckGateTest {
         val gate = UpdateCheckGate(ReleaseSource { error("offline") })
 
         assertNull(gate.findUpdate("1.0.0", userOptedIn = true))
+    }
+
+    @Test fun `explicit check distinguishes current update and network failure`() {
+        assertEquals(UpdateCheckResult.Current, UpdateCheckGate(ReleaseSource { release("1.0.0") }).check("1.0.0"))
+        assertTrue(UpdateCheckGate(ReleaseSource { release("1.1.0") }).check("1.0.0") is UpdateCheckResult.Available)
+        assertEquals(UpdateCheckResult.Failed, UpdateCheckGate(ReleaseSource { null }).check("1.0.0"))
     }
 
     private fun release(version: String) = GitHubRelease(

@@ -124,6 +124,25 @@ internal class FinanceRepository(private val database: FinanceDatabase) {
         require(dao.deleteEntry(id) == 1) { "Операция не найдена" }
     }
 
+    suspend fun updateEntry(
+        id: Long,
+        kind: EntryKind,
+        accountId: Long,
+        categoryId: Long?,
+        transferAccountId: Long?,
+        amountMinor: Long,
+        note: String,
+        occurredAt: Long,
+    ): Long = database.withTransaction {
+        requireNotNull(dao.entry(id)) { "Операция не найдена" }
+        deleteEntry(id)
+        when (kind) {
+            EntryKind.INCOME -> addIncome(accountId, categoryId, amountMinor, note, occurredAt)
+            EntryKind.EXPENSE -> addExpense(accountId, categoryId, amountMinor, note, occurredAt)
+            EntryKind.TRANSFER -> transfer(accountId, requireNotNull(transferAccountId) { "Выберите счёт назначения" }, amountMinor, note, occurredAt)
+        }
+    }
+
     suspend fun exportBackup(): String = database.withTransaction {
         FinanceBackupCodec.encode(FinanceBackup(
             exportedAt = System.currentTimeMillis(),

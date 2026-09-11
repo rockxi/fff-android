@@ -39,6 +39,12 @@ retain an explicit save action because their final selector is a destination
 account rather than a category. While a save is in flight, repeated submission
 and dismissal are disabled.
 
+Existing operations can be edited from the operations timeline and budget details.
+Amount, kind, source/destination account, category, note and local calendar date are
+mutable. The repository reverses the old balance effect and validates/applies the
+replacement inside one Room transaction, so a failed edit leaves both the ledger
+and every account balance unchanged.
+
 Backups are versioned JSON documents selected through Android Storage Access Framework. They contain all Finance tables, including archived objects and explicit IDs. A null `categoryId` on an income or expense round-trips as the built-in `Вне бюджета` marker. Restore validates present category references and currencies, then replaces Finance data in one transaction. Backup jobs are serialized and their document streams are opened on the IO dispatcher; the UI prevents overlapping picker or backup operations. The file is user-controlled; no cloud storage is required.
 
 Analytics defaults to the current local calendar month. Its inclusive presets are
@@ -180,8 +186,14 @@ Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and cont
 ## Updates and releases
 
 The updater is in `update/`. With explicit consent it reads the latest public GitHub release, accepts only the canonical `fff-<tag>.apk` and matching `.sha256`, downloads with size/redirect limits, verifies SHA-256, and opens Android Package Installer through a non-exported FileProvider. Android may require the user to authorize installs from FFF once.
+The launcher also exposes an explicit `Проверить обновления` action. A tap is
+one-time consent for that network check and reports when the installed version is
+already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.11.0` (`versionCode 18`) adds explicit update checks from the launcher
+and transactional Finance operation editing, including the local calendar date.
 
 Version `0.10.1` (`versionCode 17`) adds the explicit `Без бюджета` assignment
 for categories. Such categories remain available in operations and general

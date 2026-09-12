@@ -52,5 +52,14 @@ object AppCatalog {
             accent = AppAccent.Mint,
             destination = Destination.Gym,
         ),
+        FffApplication(
+            id = "calories",
+            name = "Калории",
+            kicker = "NUTRITION LOG",
+            description = "Локальный дневник питания, калории и баланс белков, жиров и углеводов.",
+            meta = "MEALS · CALORIES · MACROS",
+            accent = AppAccent.Mint,
+            destination = Destination.Calories,
+        ),
     )
 }

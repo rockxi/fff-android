@@ -23,6 +23,11 @@ import ru.rockxi.fff.data.gym.GymRepository
 import ru.rockxi.fff.ui.gym.GymScreen
 import ru.rockxi.fff.ui.gym.GymViewModel
 import ru.rockxi.fff.ui.gym.RepositoryGymStore
+import ru.rockxi.fff.data.calories.CalorieDatabase
+import ru.rockxi.fff.data.calories.CalorieRepository
+import ru.rockxi.fff.ui.calories.CalorieScreen
+import ru.rockxi.fff.ui.calories.CalorieViewModel
+import ru.rockxi.fff.ui.calories.RepositoryCalorieStore
 
 @Composable
 fun FffApp() {
@@ -49,6 +54,14 @@ fun FffApp() {
                     ),
                 )
                 GymScreen(viewModel = model, onBack = navController::popBackStack)
+            }
+            composable(Destination.Calories.route) {
+                val model: CalorieViewModel = viewModel(
+                    factory = CalorieViewModel.factory(
+                        RepositoryCalorieStore(CalorieRepository(CalorieDatabase.get(context))),
+                    ),
+                )
+                CalorieScreen(viewModel = model, onBack = navController::popBackStack)
             }
         }
     }

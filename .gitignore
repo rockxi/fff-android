@@ -5,6 +5,7 @@
 **/build/
 local.properties
 *.iml
+.codex/
 
 # Signing material and credentials
 *.jks

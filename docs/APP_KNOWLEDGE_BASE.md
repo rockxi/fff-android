@@ -8,6 +8,7 @@ FFF is the main native Android application and launcher. It presents a catalog o
 - **Harness** — authenticated native client for the same AI agent and conversation used by the Telegram bot.
 - **Remote Control** — SSH host management, non-interactive terminal commands and background Codex CLI sessions.
 - **Gym Tracker** — local workout journal with exercises, sets, records and a calendar.
+- **Calorie Tracker (`Калории`)** — local food diary with daily calorie and macronutrient targets.
 
 The Android package is `ru.rockxi.fff`. Navigation starts in `ui/FffApp.kt`; catalog metadata lives in `model/FffApplication.kt`; destinations live in `navigation/Destination.kt`.
 
@@ -179,6 +180,54 @@ data**. Platform app-data backup is also disabled explicitly by the manifest
 does not provide a separate Gym backup. Preserving Gym data currently relies on
 keeping the installed application's private data during in-place updates.
 
+## Calorie Tracker
+
+Calorie Tracker is a separate local-first nutrition application. Its code is
+split between `data/calories` (`CalorieEntities.kt`, `CalorieDao.kt`,
+`CalorieDatabase.kt` and `CalorieRepository.kt`) and `ui/calories`
+(`CalorieViewModel.kt` and `CalorieScreen.kt`). The launcher catalog entry routes
+through `Destination.Calories`; opening it creates the repository-backed
+ViewModel and goes directly to the device's current local day.
+
+The source of truth is the application-private Room database `fff-calorie.db`,
+independent from Finance and Gym. Schema version 1 contains the singleton
+`calorie_profile`, reusable `calorie_foods` and nutrition-snapshot
+`calorie_diary_entries` tables. The profile is seeded with editable goals of
+2000 kcal, 120 g protein, 70 g fat and 230 g carbohydrates. Energy is stored as
+integer kcal, macro and portion weights as integer milligrams, and calendar days
+as ISO `YYYY-MM-DD`, so calculations and stored days do not drift through
+floating-point or timezone conversion. Database triggers mirror repository
+validation for profile, food and diary writes.
+
+The phone-first diary opens on today and supports previous/next day navigation
+and an explicit date picker without creating empty day rows. It shows consumed
+and remaining calories, protein/fat/carbohydrate progress and entries grouped
+into breakfast, lunch, dinner and snacks. Catalog foods store nutrition per
+100 g; adding a portion snapshots its calculated nutrition into history using
+checked integer half-up arithmetic. Quick entries instead record known totals
+without creating a catalog food. Recent foods are derived from persisted diary
+history and prefill the latest portion. The UI supports creating, searching and
+editing foods; creating, editing, moving and explicitly deleting diary entries;
+and editing daily targets through FFF custom modals. A referenced catalog food
+cannot be deleted until its diary entries are removed, and editing a food never
+rewrites historical snapshots.
+
+Calorie Tracker has no Telegram, Harness, remote-food-service or network
+dependency. Its data is not included in the versioned Finance JSON backup, and
+Android platform backup remains disabled by the manifest. There is currently no
+dedicated Calorie export/restore flow: preservation relies on retaining private
+application data during an in-place update. Uninstalling or clearing app data can
+therefore permanently remove the calorie diary.
+
+Calorie verification covers the repository's validation, exact nutrition
+rounding, history snapshots, recent-food ordering, aggregation and deletion
+rules; ViewModel tests cover date isolation, entry lifecycle, targets and
+failure/busy states. Catalog and navigation tests verify the launcher route. For
+release handoff, run the complete Gradle gate and additionally click through the
+acceptance scenarios in `docs/CALORIE_TRACKER_SPEC.md` on a narrow phone/emulator,
+including keyboard focus, date changes, relaunch persistence and edit/delete
+flows.
+
 ## UI system
 
 Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and controls belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent. Finance text inputs expose focus, supporting and field-error states; custom single-choice rows and four-column emoji/category grids provide checked radio semantics and at least 48dp touch targets.
@@ -191,6 +240,10 @@ one-time consent for that network check and reports when the installed version i
 already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.12.0` (`versionCode 19`) adds the local-first Calorie Tracker with a
+today-first meal diary, reusable foods and quick entries, editable goals and
+calorie/macronutrient progress.
 
 Version `0.11.0` (`versionCode 18`) adds explicit update checks from the launcher
 and transactional Finance operation editing, including the local calendar date.

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.RestaurantMenu
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -114,6 +115,7 @@ private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit) {
         Destination.RemoteControl -> Icons.Rounded.Terminal
         Destination.Harness -> Icons.Rounded.AutoAwesome
         Destination.Gym -> Icons.Rounded.FitnessCenter
+        Destination.Calories -> Icons.Rounded.RestaurantMenu
     }
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(FffSurface)

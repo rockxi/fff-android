@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,9 +72,22 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
             lineHeight = 21.sp,
             modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
         )
-        AppCatalog.applications.forEachIndexed { index, app ->
-            AppCard(app = app, number = index + 1, onClick = { onOpen(app.destination) })
-            Spacer(Modifier.height(14.dp))
+        AppCatalog.applications.chunked(2).forEachIndexed { rowIndex, applications ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                applications.forEachIndexed { columnIndex, app ->
+                    AppCard(
+                        app = app,
+                        number = rowIndex * 2 + columnIndex + 1,
+                        onClick = { onOpen(app.destination) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (applications.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(10.dp))
         }
         OutlinedButton(
             onClick = UpdateRequests::requestCheck,
@@ -106,7 +121,7 @@ private fun BrandBar() {
 }
 
 @Composable
-private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit) {
+private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val accent = if (app.accent == AppAccent.Mint) FffMint else FffViolet
     val darkAccent = if (app.accent == AppAccent.Mint) Color(0xFF13231F) else Color(0xFF1F192C)
     val icon = when (app.destination) {
@@ -118,38 +133,38 @@ private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit) {
         Destination.Calories -> Icons.Rounded.RestaurantMenu
     }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(FffSurface)
-            .border(1.dp, FffLine, RoundedCornerShape(18.dp)).clickable(onClick = onClick),
+        modifier.clip(RoundedCornerShape(16.dp)).background(FffSurface)
+            .border(1.dp, FffLine, RoundedCornerShape(16.dp)).clickable(onClick = onClick),
     ) {
         Box(
-            Modifier.fillMaxWidth().height(146.dp)
+            Modifier.fillMaxWidth().height(72.dp)
                 .background(Brush.linearGradient(listOf(darkAccent, Color(0xFF090C11)))),
         ) {
             GridDecoration(accent)
             Text("%02d".format(number), color = accent, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.TopStart).padding(18.dp).border(1.dp, accent.copy(alpha=.6f), CircleShape).padding(horizontal=9.dp, vertical=4.dp))
-            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).size(40.dp))
+                modifier = Modifier.align(Alignment.TopStart).padding(10.dp).border(1.dp, accent.copy(alpha=.6f), CircleShape).padding(horizontal=7.dp, vertical=2.dp))
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp).size(28.dp))
         }
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding(12.dp)) {
             AccentLabel(app.kicker, accent)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(app.name, color = FffText, fontWeight = FontWeight.Bold, fontSize = 23.sp)
+                Text(app.name, color = FffText, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
                 Spacer(Modifier.weight(1f))
-                Icon(Icons.Rounded.ArrowOutward, contentDescription = "Открыть ${app.name}", tint = FffMuted)
+                Icon(Icons.Rounded.ArrowOutward, contentDescription = "Открыть ${app.name}", tint = FffMuted, modifier = Modifier.size(18.dp))
             }
-            Text(app.description, color = Color(0xFF98A4AE), fontSize = 13.sp, lineHeight = 19.sp,
-                modifier = Modifier.padding(top = 9.dp, bottom = 16.dp))
+            Text(app.description, color = Color(0xFF98A4AE), fontSize = 11.sp, lineHeight = 15.sp,
+                maxLines = 2, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(FffLine))
             Text(app.meta, color = Color(0xFF687682), fontSize = 9.sp, fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.sp, modifier = Modifier.padding(top = 13.dp))
+                maxLines = 1, letterSpacing = .5.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
 
 @Composable
 private fun GridDecoration(accent: Color) {
-    Row(Modifier.fillMaxSize().padding(20.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-        repeat(6) { Box(Modifier.size(1.dp, 106.dp).background(accent.copy(alpha = .06f))) }
+    Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        repeat(4) { Box(Modifier.width(1.dp).fillMaxHeight().background(accent.copy(alpha = .06f))) }
     }
 }
 

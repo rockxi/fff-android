@@ -241,6 +241,10 @@ already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
+Version `0.12.1` (`versionCode 20`) makes the launcher catalog compact: mini-app
+cards use a two-column phone grid with shorter artwork and bounded descriptions,
+reducing the amount of scrolling while preserving the full-card touch targets.
+
 Version `0.12.0` (`versionCode 19`) adds the local-first Calorie Tracker with a
 today-first meal diary, reusable foods and quick entries, editable goals and
 calorie/macronutrient progress.

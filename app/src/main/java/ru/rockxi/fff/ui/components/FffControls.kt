@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -72,6 +73,8 @@ fun FffTextInput(
     supportingText: String? = null,
     error: String? = null,
     singleLine: Boolean = true,
+    imeAction: ImeAction = ImeAction.Next,
+    onImeAction: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val glow by animateColorAsState(
@@ -103,8 +106,9 @@ fun FffTextInput(
         keyboardOptions = KeyboardOptions(
             capitalization = spec.capitalization,
             keyboardType = spec.keyboardType,
-            imeAction = ImeAction.Next,
+            imeAction = imeAction,
         ),
+        keyboardActions = KeyboardActions(onSearch = { onImeAction?.invoke() }),
         shape = RoundedCornerShape(15.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = FffMint,

@@ -102,13 +102,21 @@ class CalorieViewModelTest {
         assertEquals(450,vm.state.value.externalDayTotal.caloriesKcal)
     }
 
-    @Test fun `external search debounces and keeps latest query only`()=runTest(dispatcher){
+    @Test fun `external search waits for explicit submit and keeps latest query only`()=runTest(dispatcher){
         val client=FakeCalorieCatalogClient()
         val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{"owner-token"})
         advanceUntilIdle()
         vm.search("яб");vm.search("яблоко");advanceUntilIdle()
+        assertTrue(client.queries.isEmpty())
+        assertNull(vm.state.value.externalSubmittedQuery)
+        vm.submitSearch();advanceUntilIdle()
         assertEquals(listOf("яблоко"),client.queries)
         assertEquals("яблоко",vm.state.value.externalResults.single().name)
+        vm.search("груша");advanceUntilIdle()
+        assertTrue(vm.state.value.externalResults.isEmpty())
+        assertNull(vm.state.value.externalSubmittedQuery)
+        vm.submitSearch();advanceUntilIdle()
+        assertEquals(listOf("яблоко","груша"),client.queries)
         vm.resetSearch();advanceUntilIdle()
         assertTrue(vm.state.value.externalResults.isEmpty())
     }
@@ -132,6 +140,8 @@ class CalorieViewModelTest {
         val client=FakeCalorieCatalogClient()
         val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{null})
         advanceUntilIdle();vm.search("молоко");advanceUntilIdle()
+        assertNull(vm.state.value.externalError)
+        vm.submitSearch();advanceUntilIdle()
         assertTrue(vm.state.value.externalError.orEmpty().contains("Harness"))
         assertTrue(client.queries.isEmpty())
     }

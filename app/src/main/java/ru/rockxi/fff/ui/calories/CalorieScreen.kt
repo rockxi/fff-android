@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
@@ -88,7 +89,7 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         s.error?.let { Text(it,color=Color(0xFFFF8DA7),modifier=Modifier.align(Alignment.BottomCenter).padding(16.dp).background(CalSurface,RoundedCornerShape(12.dp)).padding(12.dp)) }
     }
     if(datePicker) DateModal(s.date,{datePicker=false}){viewModel.selectDate(it);datePicker=false}
-    addMeal?.let { meal -> FoodPicker(s, meal, viewModel::search, {viewModel.resetSearch();addMeal=null;scanError=null}, {food->amountMeal=meal;amountFood=food;viewModel.resetSearch();addMeal=null}, {quickMeal=meal;viewModel.resetSearch();addMeal=null}, {createFoodMeal=meal;createFoodBarcode=null;foodsBeforeCreate=s.allFoods.mapTo(mutableSetOf()){it.id};createFood=true;viewModel.resetSearch();addMeal=null}, {foods=true;viewModel.resetSearch();addMeal=null}, scanBusy, scanError, { item -> externalMeal=meal;addMeal=null;viewModel.resetSearch();viewModel.openExternal(item.id) }) {
+    addMeal?.let { meal -> FoodPicker(s, meal, viewModel::search, viewModel::submitSearch, {viewModel.resetSearch();addMeal=null;scanError=null}, {food->amountMeal=meal;amountFood=food;viewModel.resetSearch();addMeal=null}, {quickMeal=meal;viewModel.resetSearch();addMeal=null}, {createFoodMeal=meal;createFoodBarcode=null;foodsBeforeCreate=s.allFoods.mapTo(mutableSetOf()){it.id};createFood=true;viewModel.resetSearch();addMeal=null}, {foods=true;viewModel.resetSearch();addMeal=null}, scanBusy, scanError, { item -> externalMeal=meal;addMeal=null;viewModel.resetSearch();viewModel.openExternal(item.id) }) {
         if (!scanBusy) {
             scanError = null
             scanBusy = true
@@ -224,12 +225,17 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
     }
 }
 
-@Composable private fun FoodPicker(s:CalorieState,meal:MealType,search:(String)->Unit,dismiss:()->Unit,select:(FoodEntity)->Unit,quick:()->Unit,create:()->Unit,all:()->Unit,scanBusy:Boolean,scanError:String?,selectExternal:(ExternalFoodSummary)->Unit,scan:()->Unit){
+@Composable private fun FoodPicker(s:CalorieState,meal:MealType,search:(String)->Unit,submitSearch:()->Unit,dismiss:()->Unit,select:(FoodEntity)->Unit,quick:()->Unit,create:()->Unit,all:()->Unit,scanBusy:Boolean,scanError:String?,selectExternal:(ExternalFoodSummary)->Unit,scan:()->Unit){
     val focus=remember{FocusRequester()}
     val keyboard=LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit){focus.requestFocus()}
     FffModal("Добавить · ${mealName(meal)}",dismiss,dismissEnabled=!s.busy&&!scanBusy){
-        FffTextInput("Поиск продуктов",s.search,search,Modifier.focusRequester(focus))
+        FffTextInput("Поиск продуктов",s.search,search,Modifier.focusRequester(focus),imeAction=ImeAction.Search,onImeAction={keyboard?.hide();submitSearch()})
+        Button({keyboard?.hide();submitSearch()},Modifier.fillMaxWidth().heightIn(min=48.dp),enabled=s.search.trim().length>=2&&!s.externalSearchBusy,colors=ButtonDefaults.buttonColors(containerColor=CalLime,contentColor=CalBg)){
+            Icon(Icons.Rounded.Search,null)
+            Spacer(Modifier.width(10.dp))
+            Text("Искать",fontWeight=FontWeight.SemiBold)
+        }
         Button({keyboard?.hide();scan()},Modifier.fillMaxWidth().heightIn(min=52.dp),enabled=!s.busy&&!scanBusy,colors=ButtonDefaults.buttonColors(containerColor=CalLime,contentColor=CalBg)){
             Icon(Icons.Rounded.QrCodeScanner,null)
             Spacer(Modifier.width(10.dp))
@@ -245,7 +251,7 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         val values=if(s.search.isBlank())s.recents.map{it.food}else s.foods
         if(values.isEmpty())Text(if(s.search.isBlank())"Добавьте первый продукт или быструю запись" else "В локальном каталоге ничего не найдено",color=CalMuted)
         else values.forEach{food->FoodChoice(food){select(food)}}
-        if(s.search.trim().length>=2){
+        if(s.externalSubmittedQuery!=null){
             Text("perek.us",color=CalLime,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp))
             when {
                 s.externalSearchBusy -> LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime)

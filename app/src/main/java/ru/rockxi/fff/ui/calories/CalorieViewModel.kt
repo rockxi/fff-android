@@ -76,6 +76,7 @@ internal data class CalorieState(
     val externalResults: List<ExternalFoodSummary> = emptyList(),
     val externalSelected: ExternalFood? = null,
     val externalSearchBusy: Boolean = false,
+    val externalSubmittedQuery: String? = null,
     val externalDetailBusy: Boolean = false,
     val externalError: String? = null,
     val externalDetails: Map<String, ExternalFood> = emptyMap(),
@@ -174,11 +175,15 @@ internal class CalorieViewModel(
     fun nextDay() = selectDate(mutable.value.date.plusDays(1))
     fun search(query: String) {
         externalSearchJob?.cancel()
+        externalRequest++
+        mutable.value = mutable.value.copy(search=query,foods=mutable.value.allFoods.filter { it.name.contains(query,true) },externalResults=emptyList(),externalError=null,externalSearchBusy=false,externalSubmittedQuery=null)
+    }
+    fun submitSearch() {
+        val query = mutable.value.search.trim()
+        if (query.length < 2 || mutable.value.externalSearchBusy) return
         val request = ++externalRequest
-        mutable.value = mutable.value.copy(search=query,foods=mutable.value.allFoods.filter { it.name.contains(query,true) },externalResults=emptyList(),externalError=null,externalSearchBusy=query.trim().length>=2)
-        if (query.trim().length < 2) return
+        mutable.value = mutable.value.copy(externalResults=emptyList(),externalError=null,externalSearchBusy=true,externalSubmittedQuery=query)
         externalSearchJob = viewModelScope.launch {
-            delay(350)
             try {
                 val result = withContext(io) { externalClient?.search(requireToken(), query) ?: error("Каталог продуктов недоступен") }
                     .filter { catalogContentFresh(it.fetchedAtSeconds,nowEpochSeconds()) }
@@ -187,7 +192,7 @@ internal class CalorieViewModel(
             catch (e: Throwable) { if (request == externalRequest) mutable.value=mutable.value.copy(externalSearchBusy=false,externalError=e.message?:"Ошибка поиска") }
         }
     }
-    fun resetSearch() { externalSearchJob?.cancel();externalRequest++;mutable.value=mutable.value.copy(search="",foods=mutable.value.allFoods,externalResults=emptyList(),externalSearchBusy=false,externalError=null) }
+    fun resetSearch() { externalSearchJob?.cancel();externalRequest++;mutable.value=mutable.value.copy(search="",foods=mutable.value.allFoods,externalResults=emptyList(),externalSearchBusy=false,externalError=null,externalSubmittedQuery=null) }
     fun clearExternalSelection() { externalDetailRequest++;mutable.value = mutable.value.copy(externalSelected=null,externalDetailBusy=false,externalError=null) }
     fun expireExternal() {
         val now=nowEpochSeconds()

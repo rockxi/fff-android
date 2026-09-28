@@ -276,6 +276,11 @@ already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
 
+Version `0.14.2` (`versionCode 25`) runs online Calorie Tracker product search
+only after the explicit `Искать` action or keyboard Search. Editing the query
+cancels any in-flight request and clears stale results; local foods still filter
+as the user types.
+
 Version `0.14.1` (`versionCode 24`) switches new Calorie Tracker catalog search,
 product details and barcode lookup to perek.us, while preserving legacy numeric
 FatSecret diary lookups and existing offline daily aggregates.

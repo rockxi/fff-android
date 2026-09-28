@@ -11,6 +11,7 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,8 @@ internal interface GymStore {
     suspend fun monthActivity(month: YearMonth): List<GymMonthActivity>
     suspend fun ensureWorkoutDay(date: LocalDate)
     suspend fun sets(exerciseId: Long, date: LocalDate): List<GymSetWithRecord>
+    suspend fun previousSets(exerciseId: Long, beforeDate: LocalDate): List<GymSetWithRecord>
+    suspend fun history(exerciseId: Long): List<GymSetWithRecord>
     suspend fun latestSet(exerciseId: Long): GymSetEntity?
     suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long): Long
     suspend fun update(id: Long, exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long)
@@ -45,6 +48,8 @@ internal class RepositoryGymStore(private val repository: GymRepository) : GymSt
     override suspend fun monthActivity(month: YearMonth) = repository.monthActivity(month)
     override suspend fun ensureWorkoutDay(date: LocalDate) { repository.ensureWorkoutDay(date) }
     override suspend fun sets(exerciseId: Long, date: LocalDate) = repository.exerciseSets(exerciseId, date)
+    override suspend fun previousSets(exerciseId: Long, beforeDate: LocalDate) = repository.previousExerciseSets(exerciseId, beforeDate)
+    override suspend fun history(exerciseId: Long) = repository.exerciseHistory(exerciseId)
     override suspend fun latestSet(exerciseId: Long) = repository.latestSet(exerciseId)
     override suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long) =
         if (mode == GymSetMode.BODY_WEIGHT) repository.addBodyWeightSet(exerciseId, date, reps, grams)
@@ -65,6 +70,11 @@ internal data class GymState(
     val summary: List<GymDayExerciseSummary> = emptyList(),
     val selectedExercise: GymExerciseEntity? = null,
     val sets: List<GymSetWithRecord> = emptyList(),
+    /** Complete selected-exercise history, newest first, including the selected date. */
+    val historySets: List<GymSetWithRecord> = emptyList(),
+    /** Up to six preview sets strictly before the selected date. */
+    val previousSets: List<GymSetWithRecord> = emptyList(),
+    val historyVisible: Boolean = false,
     val latestSet: GymSetEntity? = null,
     val busy: Boolean = false,
     val error: String? = null,
@@ -134,6 +144,7 @@ internal class GymViewModel(
 ) : ViewModel() {
     private val initialToday = LocalDate.now(clock)
     private val mutable = MutableStateFlow(GymState(initialToday, today = initialToday))
+    private val historyRequestGeneration = AtomicLong(0)
     val state = mutable.asStateFlow()
     init { reload() }
 
@@ -141,25 +152,60 @@ internal class GymViewModel(
         val categories = store.categories(); val exercises = store.exercises(); val summary = store.daySummary(mutable.value.date)
         val activity = store.monthActivity(mutable.value.month)
         val selected = mutable.value.selectedExercise?.let { old -> exercises.firstOrNull { it.id == old.id } }
+        val historyVisible = selected != null && mutable.value.historyVisible
         mutable.value = mutable.value.copy(categories = categories, exercises = exercises, summary = summary,
             selectedExercise = selected, sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(),
+            historySets = if (historyVisible) store.history(selected.id) else emptyList(),
+            previousSets = selected?.let { store.previousSets(it.id, mutable.value.date) }.orEmpty(), historyVisible = historyVisible,
             latestSet = selected?.let { store.latestSet(it.id) }, monthActivity = activity, busy = false, error = null)
     }
     fun previousMonth() = changeMonth(mutable.value.month.minusMonths(1))
     fun nextMonth() = changeMonth(mutable.value.month.plusMonths(1))
     fun selectDate(date: LocalDate) = launch {
+        historyRequestGeneration.incrementAndGet()
         val month = YearMonth.from(date)
-        mutable.value = mutable.value.copy(date = date, month = month, selectedExercise = null, sets = emptyList(), latestSet = null,
+        mutable.value = mutable.value.copy(date = date, month = month, selectedExercise = null, sets = emptyList(),
+            historySets = emptyList(), previousSets = emptyList(), historyVisible = false, latestSet = null,
             summary = store.daySummary(date), monthActivity = store.monthActivity(month), busy = false, error = null)
     }
     fun selectToday() = selectDate(mutable.value.today)
     fun startWorkoutDay() = mutate(block = { store.ensureWorkoutDay(mutable.value.date); reloadNow() })
     fun openExercise(id: Long) = launch {
+        historyRequestGeneration.incrementAndGet()
         val exercise = mutable.value.exercises.firstOrNull { it.id == id } ?: error("Упражнение не найдено")
         mutable.value = mutable.value.copy(selectedExercise = exercise, sets = store.sets(id, mutable.value.date),
+            historySets = emptyList(), previousSets = store.previousSets(id, mutable.value.date), historyVisible = false,
             latestSet = store.latestSet(id), busy = false)
     }
-    fun closeExercise() { mutable.value = mutable.value.copy(selectedExercise = null, sets = emptyList(), latestSet = null) }
+    fun closeExercise() {
+        historyRequestGeneration.incrementAndGet()
+        mutable.value = mutable.value.copy(selectedExercise = null, sets = emptyList(), historySets = emptyList(),
+            previousSets = emptyList(), historyVisible = false, latestSet = null, busy = false)
+    }
+    fun openExerciseHistory() {
+        if (mutable.value.busy) return
+        val exerciseId = mutable.value.selectedExercise?.id ?: return
+        val requestGeneration = historyRequestGeneration.incrementAndGet()
+        mutable.value = mutable.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val history = withContext(io) { store.history(exerciseId) }
+                if (historyRequestGeneration.get() == requestGeneration && mutable.value.selectedExercise?.id == exerciseId) {
+                    mutable.value = mutable.value.copy(historySets = history, historyVisible = true, busy = false)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (historyRequestGeneration.get() == requestGeneration && mutable.value.selectedExercise?.id == exerciseId) {
+                    mutable.value = mutable.value.copy(busy = false, error = e.message ?: "Ошибка")
+                }
+            }
+        }
+    }
+    fun closeExerciseHistory() {
+        historyRequestGeneration.incrementAndGet()
+        mutable.value = mutable.value.copy(historySets = emptyList(), historyVisible = false)
+    }
     fun createExercise(categoryId: Long, name: String, onDone: (Long) -> Unit = {}) = mutate(
         block = { store.createExercise(categoryId, name).also { reloadNow() } },
         onSuccess = onDone,
@@ -187,8 +233,11 @@ internal class GymViewModel(
     )
     private suspend fun reloadNow() {
         val exercises = store.exercises(); val selected = mutable.value.selectedExercise?.let { s -> exercises.firstOrNull { it.id == s.id } }
+        val historyVisible = selected != null && mutable.value.historyVisible
         mutable.value = mutable.value.copy(exercises = exercises, summary = store.daySummary(mutable.value.date), selectedExercise = selected,
             sets = selected?.let { store.sets(it.id, mutable.value.date) }.orEmpty(),
+            historySets = if (historyVisible) store.history(selected.id) else emptyList(),
+            previousSets = selected?.let { store.previousSets(it.id, mutable.value.date) }.orEmpty(), historyVisible = historyVisible,
             latestSet = selected?.let { store.latestSet(it.id) }, monthActivity = store.monthActivity(mutable.value.month), busy = false, error = null)
     }
     private fun changeMonth(month: YearMonth) = launch {

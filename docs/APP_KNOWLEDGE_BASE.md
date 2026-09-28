@@ -164,6 +164,14 @@ either a positive equipment weight or an explicitly entered body weight, stored
 as integer grams. These two weight modes are mutually exclusive. Exercises and
 sets can be created, edited and explicitly deleted from the phone UI.
 
+An opened exercise shows the current day's editable sets first, followed by a
+neutral grey, read-only preview of the six newest sets from earlier workout dates.
+Every preview row includes its calendar date, so a newly added exercise already
+provides useful historical context before today's first set is recorded. The
+`Вся история` action opens a scrollable read-only exercise history grouped by
+date newest-first. Historical records may carry a subdued `рекорд` label but do
+not reuse the gold current-set treatment or expose edit/delete actions.
+
 The Monday-first six-week calendar shows workout activity for the displayed
 month and opens any date into the same editable day/exercise flow; “Сегодня”
 returns to the current local date. A set is a personal record when its effective
@@ -240,6 +248,11 @@ one-time consent for that network check and reports when the installed version i
 already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.13.0` (`versionCode 21`) adds immediate read-only context from the six
+newest previous sets on every Gym exercise screen and a complete exercise history
+grouped by workout date. System Back follows the nested history → exercise → day
+navigation hierarchy.
 
 Version `0.12.1` (`versionCode 20`) makes the launcher catalog compact: mini-app
 cards use a two-column phone grid with shorter artwork and bounded descriptions,

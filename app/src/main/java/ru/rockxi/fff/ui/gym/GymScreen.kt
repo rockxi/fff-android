@@ -1,5 +1,6 @@
 package ru.rockxi.fff.ui.gym
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,12 +29,17 @@ import ru.rockxi.fff.ui.components.*
 
 private val GymBg = Color(0xFF06110C); private val GymSurface = Color(0xFF0C2117); private val GymGreen = Color(0xFF65F2AB)
 private val GymGold = Color(0xFFFFD76A); private val GymText = Color(0xFFF0FFF7); private val GymMuted = Color(0xFF8CAD9C)
+private val GymHistorySurface = Color(0xFF151B18); private val GymHistoryBorder = Color(0xFF38413D); private val GymHistoryText = Color(0xFFBEC7C2)
 
 @Composable internal fun GymScreen(viewModel: GymViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState(); var calendar by remember { mutableStateOf(false) }; var chooser by remember { mutableStateOf(false) }; var creatingExercise by remember { mutableStateOf(false) }; var exerciseEditor by remember { mutableStateOf<GymExerciseEntity?>(null) }; var addingSet by remember { mutableStateOf(false) }; var setEditor by remember { mutableStateOf<GymSetEntity?>(null) }; var deletingSetId by remember { mutableStateOf<Long?>(null) }; var deletingExercise by remember { mutableStateOf(false) }
+    BackHandler(enabled = state.selectedExercise != null) {
+        if (state.historyVisible) viewModel.closeExerciseHistory() else viewModel.closeExercise()
+    }
     Box(Modifier.fillMaxSize().background(GymBg)) {
         if (state.selectedExercise == null) DayScreen(state, onBack, { calendar = true }, { chooser = true }, viewModel::startWorkoutDay, viewModel::openExercise)
-        else ExerciseScreen(state, viewModel::closeExercise, { addingSet = true }, { setEditor = it }, { exerciseEditor = state.selectedExercise }, { deletingExercise = true }, { deletingSetId = it })
+        else if (state.historyVisible) ExerciseHistoryScreen(state, viewModel::closeExerciseHistory)
+        else ExerciseScreen(state, viewModel::closeExercise, { addingSet = true }, { setEditor = it }, { exerciseEditor = state.selectedExercise }, { deletingExercise = true }, { deletingSetId = it }, viewModel::openExerciseHistory)
         state.error?.let { Text(it, color = Color(0xFFFF8DA7), modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) }
     }
     if (calendar) GymCalendar(state, { calendar = false }, viewModel::previousMonth, viewModel::nextMonth, {
@@ -82,14 +88,59 @@ private val GymGold = Color(0xFFFFD76A); private val GymText = Color(0xFFF0FFF7)
     }
 }
 
-@Composable private fun ExerciseScreen(s: GymState, back: () -> Unit, addSet: () -> Unit, editSet: (GymSetEntity?) -> Unit, editExercise: () -> Unit, deleteExercise: () -> Unit, delete: (Long) -> Unit) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled=!s.busy) { Icon(Icons.Rounded.ArrowBack, "К списку", tint = GymText) }; Column(Modifier.weight(1f)) { Text(s.selectedExercise!!.name, color = GymText, fontSize = 24.sp, fontWeight = FontWeight.Bold); Text("${s.categories.firstOrNull { it.id == s.selectedExercise.categoryId }?.name.orEmpty()} · ${formatGymDay(s.date, s.today)}", color = GymMuted) }; IconButton(editExercise, enabled=!s.busy) { Icon(Icons.Rounded.Edit, "Редактировать упражнение", tint = GymGreen) }; IconButton(deleteExercise, enabled=!s.busy) { Icon(Icons.Rounded.DeleteForever, "Удалить упражнение", tint=Color(0xFFFF8DA7)) } }
-        Button(addSet, Modifier.fillMaxWidth(), enabled=!s.busy, colors = ButtonDefaults.buttonColors(containerColor = GymGreen, contentColor = GymBg)) { Icon(Icons.Rounded.Add, null); Text("Добавить подход") }
-        if (s.sets.isEmpty()) Text("Подходов пока нет", color = GymMuted) else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) { items(s.sets, key = { it.set.id }) { item -> SetCard(item, !s.busy, { editSet(item.set) }, { delete(item.set.id) }) } }
+@Composable private fun ExerciseScreen(s: GymState, back: () -> Unit, addSet: () -> Unit, editSet: (GymSetEntity?) -> Unit, editExercise: () -> Unit, deleteExercise: () -> Unit, delete: (Long) -> Unit, openHistory: () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled=!s.busy) { Icon(Icons.Rounded.ArrowBack, "К списку", tint = GymText) }; Column(Modifier.weight(1f)) { Text(s.selectedExercise!!.name, color = GymText, fontSize = 24.sp, fontWeight = FontWeight.Bold); Text("${s.categories.firstOrNull { it.id == s.selectedExercise.categoryId }?.name.orEmpty()} · ${formatGymDay(s.date, s.today)}", color = GymMuted) }; IconButton(editExercise, enabled=!s.busy) { Icon(Icons.Rounded.Edit, "Редактировать упражнение", tint = GymGreen) }; IconButton(deleteExercise, enabled=!s.busy) { Icon(Icons.Rounded.DeleteForever, "Удалить упражнение", tint=Color(0xFFFF8DA7)) } } }
+        item { Button(addSet, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled=!s.busy, colors = ButtonDefaults.buttonColors(containerColor = GymGreen, contentColor = GymBg)) { Icon(Icons.Rounded.Add, null); Text("Добавить подход") } }
+        if (s.sets.isEmpty()) item { Text(if (s.date == s.today) "Сегодня подходов пока нет" else "На эту дату подходов пока нет", color = GymMuted) }
+        else items(s.sets, key = { "current-${it.set.id}" }) { item -> SetCard(item, !s.busy, { editSet(item.set) }, { delete(item.set.id) }) }
+        item { PreviousSetsPreview(s.previousSets, s.latestSet != null, openHistory) }
     }
 }
 @Composable private fun SetCard(item: GymSetWithRecord, enabled:Boolean, edit: () -> Unit, delete: () -> Unit) { val gold = item.isAllTimeRecord; Surface(Modifier.fillMaxWidth().semantics { contentDescription = if (gold) "Личный рекорд" else "Подход" }, shape = RoundedCornerShape(18.dp), color = if (gold) Color(0xFF24301B) else GymSurface, border = BorderStroke(if (gold) 2.dp else 1.dp, if (gold) GymGold else Color(0xFF1E4934)), shadowElevation = if (gold) 12.dp else 0.dp) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { if (gold) Icon(Icons.Rounded.EmojiEvents, "Личный рекорд", tint = GymGold); Column(Modifier.weight(1f).padding(start = if (gold) 10.dp else 0.dp)) { Text(setWeightLabel(item.set), color = if (gold) GymGold else GymText, fontWeight = FontWeight.Bold, style = LocalTextStyle.current.copy(shadow = if (gold) Shadow(GymGold, blurRadius = 12f) else Shadow.None)); Text("${item.set.repetitions} повторений${if (gold) " · ЛИЧНЫЙ РЕКОРД" else ""}", color = if (gold) GymGold else GymMuted) }; IconButton(edit, enabled=enabled) { Icon(Icons.Rounded.Edit, "Изменить подход", tint = GymMuted) }; IconButton(delete, enabled=enabled) { Icon(Icons.Rounded.Delete, "Удалить подход", tint = Color(0xFFFF8DA7)) } } } }
+
+internal const val GYM_HISTORY_PREVIEW_LIMIT = 6
+internal fun previewGymPreviousSets(sets: List<GymSetWithRecord>): List<GymSetWithRecord> = sets.take(GYM_HISTORY_PREVIEW_LIMIT)
+internal data class GymHistoryGroup(val date: LocalDate, val sets: List<GymSetWithRecord>)
+internal fun groupGymHistorySets(sets: List<GymSetWithRecord>): List<GymHistoryGroup> =
+    sets.groupBy { LocalDate.parse(it.set.localDate) }
+        .map { (date, entries) -> GymHistoryGroup(date, entries) }
+        .sortedByDescending { it.date }
+
+@Composable private fun PreviousSetsPreview(sets: List<GymSetWithRecord>, hasHistory: Boolean, openHistory: () -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = GymHistorySurface, border = BorderStroke(1.dp, GymHistoryBorder)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Предыдущие подходы", color = GymHistoryText, fontWeight = FontWeight.Bold); Text("Последние результаты для ориентира", color = GymMuted, fontSize = 12.sp) }
+                TextButton(openHistory, Modifier.heightIn(min = 48.dp), enabled = hasHistory) { Text("Вся история", color = if (hasHistory) GymGreen else GymMuted) }
+            }
+            if (sets.isEmpty()) Text("Предыдущих подходов ещё нет", color = GymMuted)
+            else previewGymPreviousSets(sets).forEach { HistoricalSetRow(it, showDate = true) }
+        }
+    }
+}
+
+@Composable private fun ExerciseHistoryScreen(s: GymState, back: () -> Unit) {
+    val groups = remember(s.historySets) { groupGymHistorySets(s.historySets) }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled = !s.busy) { Icon(Icons.Rounded.ArrowBack, "Вернуться к упражнению", tint = GymText) }; Column(Modifier.weight(1f)) { Text("История подходов", color = GymText, fontSize = 23.sp, fontWeight = FontWeight.Bold); Text(s.selectedExercise?.name.orEmpty(), color = GymMuted) } } }
+        if (groups.isEmpty()) item { Text("История пока пуста", color = GymMuted) }
+        groups.forEach { group ->
+            item(key = "date-${group.date}") { Text(group.date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")), color = GymHistoryText, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+            items(group.sets, key = { "history-${it.set.id}" }) { HistoricalSetRow(it, showDate = false) }
+        }
+    }
+}
+
+@Composable private fun HistoricalSetRow(item: GymSetWithRecord, showDate: Boolean) {
+    val date = remember(item.set.localDate) { LocalDate.parse(item.set.localDate).format(DateTimeFormatter.ofPattern("dd.MM.yyyy")) }
+    Surface(Modifier.fillMaxWidth().semantics { contentDescription = "Исторический подход${if (showDate) " от $date" else ""}" }, shape = RoundedCornerShape(14.dp), color = GymHistorySurface, border = BorderStroke(1.dp, GymHistoryBorder)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { Text(setWeightLabel(item.set), color = GymHistoryText, fontWeight = FontWeight.SemiBold); Text("${item.set.repetitions} повторений${if (item.isAllTimeRecord) " · рекорд" else ""}", color = GymMuted, fontSize = 13.sp) }
+            if (showDate) Text(date, color = GymMuted, fontSize = 12.sp)
+        }
+    }
+}
 
 @Composable private fun ExerciseChooser(s: GymState, dismiss: () -> Unit, open: (Long) -> Unit, create: () -> Unit) { FffModal("Выберите упражнение", dismiss, dismissEnabled=!s.busy) { s.categories.forEach { category -> Text(category.name, color = GymGreen, modifier = Modifier.padding(top = 10.dp)); s.exercises.filter { it.categoryId == category.id }.forEach { ex -> FffChoiceRow(false, { if(!s.busy) { dismiss(); open(ex.id) } }, ex.name) } }; Spacer(Modifier.height(12.dp)); Button(create, Modifier.fillMaxWidth(), enabled=!s.busy) { Text("Создать упражнение") } } }
 @Composable private fun ExerciseModal(s: GymState, current: GymExerciseEntity?, dismiss: () -> Unit, save: (Long?, Long, String) -> Unit) { var name by remember(current) { mutableStateOf(current?.name.orEmpty()) }; var category by remember(current, s.categories) { mutableStateOf(current?.categoryId ?: s.categories.firstOrNull()?.id ?: 0) }; var error by remember { mutableStateOf<String?>(null) }; FffModal(if(current==null) "Новое упражнение" else "Упражнение", dismiss, if(s.busy) "Сохранение…" else "Сохранить", { if(name.isBlank()) error="Введите название" else save(current?.id, category, name.trim()) }, confirmEnabled = category != 0L && !s.busy, dismissEnabled=!s.busy) { FffTextInput("Название", name, { name=it; error=null }, error=error); Spacer(Modifier.height(10.dp)); Text("Категория"); s.categories.forEach { FffChoiceRow(category==it.id, { if(!s.busy) category=it.id }, it.name) } } }

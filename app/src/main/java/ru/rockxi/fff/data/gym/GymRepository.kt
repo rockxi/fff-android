@@ -94,6 +94,24 @@ internal class GymRepository(private val database: GymDatabase) {
         }
     }
 
+    /** Complete exercise history, newest workout/set first. */
+    suspend fun exerciseHistory(exerciseId: Long): List<GymSetWithRecord> {
+        requireNotNull(dao.exercise(exerciseId)) { "Упражнение не найдено" }
+        val recordSetId = dao.recordSetId(exerciseId)
+        return dao.setHistory(exerciseId).map { set ->
+            GymSetWithRecord(set, set.id == recordSetId)
+        }
+    }
+
+    /** Up to six latest sets from workouts strictly before the selected day. */
+    suspend fun previousExerciseSets(exerciseId: Long, beforeDate: LocalDate): List<GymSetWithRecord> {
+        requireNotNull(dao.exercise(exerciseId)) { "Упражнение не найдено" }
+        val recordSetId = dao.recordSetId(exerciseId)
+        return dao.previousSets(exerciseId, beforeDate.toString()).map { set ->
+            GymSetWithRecord(set, set.id == recordSetId)
+        }
+    }
+
     suspend fun monthActivity(month: YearMonth): List<GymMonthActivity> =
         dao.monthActivity(month.atDay(1).toString(), month.plusMonths(1).atDay(1).toString())
 

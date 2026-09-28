@@ -68,6 +68,122 @@ class GymViewModelTest {
         assertEquals(11, vm.state.value.latestSet?.repetitions)
     }
 
+    @Test fun `exercise loads bounded earlier preview and full history stays lazy`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply {
+            allSets += GymSetEntity(7, 1, "2026-09-07", 10, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 75_000, createdAt = 30)
+            allSets += GymSetEntity(8, 1, "2026-09-06", 12, GymSetMode.BODY_WEIGHT, bodyWeightGrams = 82_000, createdAt = 20)
+            allSets += GymSetEntity(9, 1, "2026-09-09", 5, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 90_000, createdAt = 40)
+        }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+
+        assertTrue(vm.state.value.historySets.isEmpty())
+        assertEquals(listOf(7L, 8L), vm.state.value.previousSets.map { it.set.id })
+        assertEquals(0, store.historyCalls)
+        vm.openExerciseHistory()
+        assertTrue(vm.state.value.busy)
+        advanceUntilIdle()
+        assertEquals(listOf(9L, 1L, 7L, 8L), vm.state.value.historySets.map { it.set.id })
+        assertEquals(1, store.historyCalls)
+        assertTrue(vm.state.value.historyVisible)
+        vm.closeExerciseHistory()
+        assertFalse(vm.state.value.historyVisible)
+        assertTrue(vm.state.value.historySets.isEmpty())
+    }
+
+    @Test fun `history preview is bounded and full history groups newest date first`() {
+        val sets = listOf(
+            GymSetEntity(1, 1, "2026-09-06", 8, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 80_000),
+            GymSetEntity(2, 1, "2026-09-08", 6, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 90_000),
+            GymSetEntity(3, 1, "2026-09-08", 10, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 75_000),
+            GymSetEntity(4, 1, "2026-09-05", 12, GymSetMode.BODY_WEIGHT, bodyWeightGrams = 82_000),
+            GymSetEntity(5, 1, "2026-09-04", 7, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 70_000),
+            GymSetEntity(6, 1, "2026-09-03", 9, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 65_000),
+            GymSetEntity(7, 1, "2026-09-02", 11, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 60_000),
+        ).map { GymSetWithRecord(it, false) }
+
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L), previewGymPreviousSets(sets).map { it.set.id })
+        val groups = groupGymHistorySets(sets)
+        assertEquals(listOf("2026-09-08", "2026-09-06", "2026-09-05", "2026-09-04", "2026-09-03", "2026-09-02"), groups.map { it.date.toString() })
+        assertEquals(listOf(2L, 3L), groups.first().sets.map { it.set.id })
+    }
+
+    @Test fun `history refreshes after mutations and clears on exercise navigation`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply {
+            allSets += GymSetEntity(7, 1, "2026-09-07", 10, GymSetMode.EXTERNAL_WEIGHT, weightGrams = 75_000)
+        }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle(); vm.openExerciseHistory(); advanceUntilIdle()
+        vm.saveSet(null, GymSetMode.EXTERNAL_WEIGHT, "90", "5", failValidation(), {}); advanceUntilIdle()
+        assertEquals(3, vm.state.value.historySets.size)
+        assertEquals(1, vm.state.value.previousSets.size)
+        assertTrue(vm.state.value.historyVisible)
+
+        vm.selectDate(LocalDate.of(2026, 9, 7)); advanceUntilIdle()
+        assertNull(vm.state.value.selectedExercise)
+        assertTrue(vm.state.value.historySets.isEmpty())
+        assertTrue(vm.state.value.previousSets.isEmpty())
+        assertFalse(vm.state.value.historyVisible)
+
+        vm.openExercise(1); advanceUntilIdle(); vm.closeExercise()
+        assertNull(vm.state.value.selectedExercise)
+        assertTrue(vm.state.value.historySets.isEmpty())
+        assertFalse(vm.state.value.historyVisible)
+    }
+
+    @Test fun `closing exercise while history loads cannot reopen stale history`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply { delayHistory = true }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+
+        vm.openExerciseHistory(); runCurrent()
+        assertTrue(vm.state.value.busy)
+        vm.closeExercise()
+        assertFalse(vm.state.value.busy)
+        store.historyGate.complete(Unit); advanceUntilIdle()
+
+        assertNull(vm.state.value.selectedExercise)
+        assertFalse(vm.state.value.historyVisible)
+        assertTrue(vm.state.value.historySets.isEmpty())
+        assertFalse(vm.state.value.busy)
+    }
+
+    @Test fun `stale history cannot open after closing and reopening the same exercise`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply { delayHistory = true }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+
+        vm.openExerciseHistory(); runCurrent()
+        assertTrue(vm.state.value.busy)
+        vm.closeExercise()
+        vm.openExercise(1)
+        runCurrent()
+        assertEquals(1L, vm.state.value.selectedExercise?.id)
+
+        store.historyGate.complete(Unit); advanceUntilIdle()
+
+        assertEquals(1L, vm.state.value.selectedExercise?.id)
+        assertFalse(vm.state.value.historyVisible)
+        assertTrue(vm.state.value.historySets.isEmpty())
+        assertFalse(vm.state.value.busy)
+    }
+
+    @Test fun `stale history failure cannot surface after closing exercise`() = runTest(dispatcher) {
+        val store = FakeGymStore().apply { delayHistory = true; failHistory = true }
+        val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
+        advanceUntilIdle(); vm.openExercise(1); advanceUntilIdle()
+
+        vm.openExerciseHistory(); runCurrent()
+        vm.closeExercise()
+        assertFalse(vm.state.value.busy)
+        store.historyGate.complete(Unit); advanceUntilIdle()
+
+        assertNull(vm.state.value.selectedExercise)
+        assertFalse(vm.state.value.historyVisible)
+        assertNull(vm.state.value.error)
+        assertFalse(vm.state.value.busy)
+    }
+
     @Test fun `latest set is absent for exercise without history`() = runTest(dispatcher) {
         val store = FakeGymStore().apply { allSets.clear() }
         val vm = GymViewModel(store, Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneOffset.UTC), dispatcher)
@@ -199,8 +315,9 @@ private class FakeGymStore : GymStore {
     val allSets = mutableListOf(GymSetEntity(1, 1, "2026-09-08", 8, GymSetMode.EXTERNAL_WEIGHT, 80_000))
     private val days = mutableSetOf("2026-09-08")
     private var next = 2L
-    var addCalls=0; var createCalls=0; var deleteExerciseCalls=0; var ensureDayCalls=0; var failNextAdd=false; var delayExerciseTwoSets=false
+    var addCalls=0; var createCalls=0; var deleteExerciseCalls=0; var ensureDayCalls=0; var historyCalls=0; var failNextAdd=false; var delayExerciseTwoSets=false; var delayHistory=false; var failHistory=false
     val exerciseTwoGate=CompletableDeferred<Unit>()
+    val historyGate=CompletableDeferred<Unit>()
     override suspend fun categories() = listOf(category)
     override suspend fun exercises():List<GymExerciseEntity> = exerciseList.toList()
     override suspend fun createExercise(categoryId: Long, name: String):Long { createCalls++; exerciseList.removeAll { it.id==2L }; exerciseList += GymExerciseEntity(2,categoryId,name); return 2L }
@@ -210,6 +327,13 @@ private class FakeGymStore : GymStore {
     override suspend fun monthActivity(month: YearMonth): List<GymMonthActivity> = days.filter { YearMonth.from(LocalDate.parse(it))==month }.sorted().map { day -> val sets=allSets.filter { it.localDate==day }; GymMonthActivity(day,sets.map { it.exerciseId }.distinct().size.toLong(),sets.size.toLong(),sets.sumOf { it.repetitions }.toLong()) }
     override suspend fun ensureWorkoutDay(date: LocalDate) { ensureDayCalls++; days += date.toString() }
     override suspend fun sets(exerciseId: Long, date: LocalDate):List<GymSetWithRecord> { if(delayExerciseTwoSets && exerciseId==2L) exerciseTwoGate.await(); return allSets.filter { it.exerciseId==exerciseId && it.localDate==date.toString() }.map { GymSetWithRecord(it, it.id==1L) } }
+    override suspend fun previousSets(exerciseId: Long, beforeDate: LocalDate): List<GymSetWithRecord> = allSets
+        .filter { it.exerciseId == exerciseId && it.localDate < beforeDate.toString() }
+        .sortedWith(compareByDescending<GymSetEntity> { it.localDate }.thenByDescending { it.createdAt }.thenByDescending { it.id })
+        .take(6).map { GymSetWithRecord(it, it.id == 1L) }
+    override suspend fun history(exerciseId: Long): List<GymSetWithRecord> { historyCalls++; if (delayHistory) historyGate.await(); if (failHistory) error("history failed"); return allSets.filter { it.exerciseId == exerciseId }
+        .sortedWith(compareByDescending<GymSetEntity> { it.localDate }.thenByDescending { it.createdAt }.thenByDescending { it.id })
+        .map { GymSetWithRecord(it, it.id == 1L) } }
     override suspend fun latestSet(exerciseId: Long): GymSetEntity? = allSets.filter { it.exerciseId == exerciseId }
         .maxWithOrNull(compareBy<GymSetEntity>({ it.localDate }, { it.createdAt }, { it.id }))
     override suspend fun add(exerciseId: Long, date: LocalDate, reps: Int, mode: GymSetMode, grams: Long): Long { addCalls++; if(failNextAdd){failNextAdd=false; error("write failed")}; days += date.toString(); val id=next++; allSets += GymSetEntity(id,exerciseId,date.toString(),reps,mode,if(mode==GymSetMode.EXTERNAL_WEIGHT) grams else null,if(mode==GymSetMode.BODY_WEIGHT) grams else null); return id }

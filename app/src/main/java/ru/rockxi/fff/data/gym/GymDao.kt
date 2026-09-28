@@ -34,6 +34,11 @@ internal interface GymDao {
     @Query("SELECT * FROM gym_sets WHERE id = :id") suspend fun set(id: Long): GymSetEntity?
     @Query("SELECT * FROM gym_sets WHERE exerciseId = :exerciseId AND localDate = :localDate ORDER BY createdAt, id")
     suspend fun sets(exerciseId: Long, localDate: String): List<GymSetEntity>
+    @Query("SELECT * FROM gym_sets WHERE exerciseId = :exerciseId ORDER BY localDate DESC, createdAt DESC, id DESC")
+    suspend fun setHistory(exerciseId: Long): List<GymSetEntity>
+    @Query("""SELECT * FROM gym_sets WHERE exerciseId = :exerciseId AND localDate < :beforeDate
+        ORDER BY localDate DESC, createdAt DESC, id DESC LIMIT 6""")
+    suspend fun previousSets(exerciseId: Long, beforeDate: String): List<GymSetEntity>
     @Query("SELECT * FROM gym_sets WHERE localDate = :localDate ORDER BY createdAt, id") suspend fun sets(localDate: String): List<GymSetEntity>
     @Query("SELECT * FROM gym_sets WHERE exerciseId = :exerciseId ORDER BY localDate DESC, createdAt DESC, id DESC LIMIT 1")
     suspend fun latestSet(exerciseId: Long): GymSetEntity?

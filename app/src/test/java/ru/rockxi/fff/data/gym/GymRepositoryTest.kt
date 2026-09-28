@@ -141,6 +141,40 @@ class GymRepositoryTest {
         assertFails { repository.latestSet(Long.MAX_VALUE) }
     }
 
+    @Test fun exerciseHistoryIsNewestFirstAndPreviewIsBoundedToEarlierDates() = runBlocking {
+        val category = repository.categories().first().id
+        val exercise = repository.createExercise(category, "Присед")
+        val other = repository.createExercise(category, "Жим")
+        val first = LocalDate.of(2026, 9, 1)
+        val selected = LocalDate.of(2026, 9, 8)
+        val latest = LocalDate.of(2026, 9, 10)
+        val oldestId = repository.addExternalWeightSet(exercise, first, 10, 100_000)
+        val selectedFirstId = repository.addExternalWeightSet(exercise, selected, 8, 110_000)
+        val selectedSecondId = repository.addExternalWeightSet(exercise, selected, 6, 115_000)
+        val latestId = repository.addExternalWeightSet(exercise, latest, 5, 120_000)
+        repository.addExternalWeightSet(other, latest, 3, 200_000)
+
+        val history = repository.exerciseHistory(exercise)
+        assertEquals(listOf(latestId, selectedSecondId, selectedFirstId, oldestId), history.map { it.set.id })
+        assertEquals(listOf(latest.toString(), selected.toString(), selected.toString(), first.toString()), history.map { it.set.localDate })
+        assertEquals(listOf(oldestId), repository.previousExerciseSets(exercise, selected).map { it.set.id })
+        assertEquals(1, history.count { it.isAllTimeRecord })
+        assertEquals(latestId, history.single { it.isAllTimeRecord }.set.id)
+        assertFails { repository.exerciseHistory(Long.MAX_VALUE) }
+    }
+
+    @Test fun previousExerciseSetsReturnsOnlySixNewestSetsBeforeSelectedDate() = runBlocking {
+        val exercise = repository.createExercise(repository.categories().first().id, "Тяга")
+        val selected = LocalDate.of(2026, 9, 20)
+        val inserted = (1L..8L).map { offset ->
+            repository.addExternalWeightSet(exercise, selected.minusDays(offset), offset.toInt(), offset * 1_000)
+        }
+        repository.addExternalWeightSet(exercise, selected, 9, 9_000)
+        repository.addExternalWeightSet(exercise, selected.plusDays(1), 10, 10_000)
+
+        assertEquals(inserted.take(6), repository.previousExerciseSets(exercise, selected).map { it.set.id })
+    }
+
     @Test fun dayAndMonthProjectionsSupportTodayAndCalendarScreens() = runBlocking {
         val category = repository.categories().first().id
         val bench = repository.createExercise(category, "Жим")

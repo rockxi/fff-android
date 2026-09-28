@@ -78,9 +78,9 @@ internal class CalorieRepository(
     suspend fun correctExternalDay(date: LocalDate, entryId: Long?, nutrition: NutritionTotals) = database.withTransaction {
         validateTotals(nutrition)
         if (entryId != null) {
-            val entry = requireNotNull(dao.externalEntry(entryId)) { "Запись FatSecret не найдена" }
+            val entry = requireNotNull(dao.externalEntry(entryId)) { "Запись каталога не найдена" }
             require(entry.localDate == date.toString()) { "Запись относится к другому дню" }
-            require(dao.deleteExternalEntry(entryId) == 1) { "Не удалось удалить запись FatSecret" }
+            require(dao.deleteExternalEntry(entryId) == 1) { "Не удалось удалить запись каталога" }
         }
         dao.upsertExternalDayTotal(ExternalDayTotalEntity(
             date.toString(), nutrition.caloriesKcal, nutrition.proteinMg,
@@ -185,8 +185,8 @@ internal class CalorieRepository(
     }
 
     private fun validateExternal(foodId: String, servingId: String, amountGramsMg: Long, nutrition: NutritionTotals) {
-        require(foodId.matches(Regex("[1-9][0-9]{0,17}"))) { "Некорректный ID продукта" }
-        require(servingId.matches(Regex("[1-9][0-9]{0,17}"))) { "Некорректный ID порции" }
+        require(foodId.matches(Regex("(?:[1-9][0-9]{0,18}|p_[A-Za-z0-9_-]{2,220})"))) { "Некорректный ID продукта" }
+        require(servingId.matches(Regex("(?:0|[1-9][0-9]{0,17})"))) { "Некорректный ID порции" }
         require(amountGramsMg in 1..MAX_AMOUNT_MG) { "Некорректная масса порции" }
         validateTotals(nutrition)
         require(nutrition.caloriesKcal > 0 || nutrition.proteinMg > 0 || nutrition.fatMg > 0 || nutrition.carbMg > 0) { "Нет пищевой ценности" }

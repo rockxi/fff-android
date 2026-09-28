@@ -136,6 +136,16 @@ class CalorieRepositoryTest {
         assertTrue(repository.entries(date).isEmpty())
     }
 
+    @Test fun perekAndLegacyEntriesKeepOneOfflineDayTotal() = runBlocking {
+        val date = LocalDate.of(2026, 9, 12)
+        repository.addExternalEntry("12345", "67890", date, MealType.LUNCH, 125_000,
+            NutritionTotals(175, 12_000, 5_000, 18_000))
+        repository.addExternalEntry("p_bWFnbml0L3N1cC1ncmlibm95", "0", date,
+            MealType.DINNER, 60_000, NutritionTotals(186, 6_000, 1_800, 36_000))
+        assertEquals(2, repository.externalEntries(date).size)
+        assertEquals(NutritionTotals(361, 18_000, 6_800, 54_000), repository.externalDayTotal(date))
+    }
+
     @Test fun invalidExternalEntryCannotChangeDailyAggregate() = runBlocking {
         val date = LocalDate.of(2026, 9, 12)
         assertFails { repository.addExternalEntry("abc", "2", date, MealType.LUNCH, 100_000, NutritionTotals(100)) }

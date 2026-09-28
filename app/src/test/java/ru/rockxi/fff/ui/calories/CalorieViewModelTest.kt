@@ -103,7 +103,7 @@ class CalorieViewModelTest {
     }
 
     @Test fun `external search debounces and keeps latest query only`()=runTest(dispatcher){
-        val client=FakeFatSecretClient()
+        val client=FakeCalorieCatalogClient()
         val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{"owner-token"})
         advanceUntilIdle()
         vm.search("яб");vm.search("яблоко");advanceUntilIdle()
@@ -129,7 +129,7 @@ class CalorieViewModelTest {
     }
 
     @Test fun `online search explains missing pairing without invoking provider`()=runTest(dispatcher){
-        val client=FakeFatSecretClient()
+        val client=FakeCalorieCatalogClient()
         val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{null})
         advanceUntilIdle();vm.search("молоко");advanceUntilIdle()
         assertTrue(vm.state.value.externalError.orEmpty().contains("Harness"))
@@ -165,7 +165,7 @@ class CalorieViewModelTest {
 
     @Test fun `history refresh does not silently stop after thirty distinct food IDs`()=runTest(dispatcher){
         val store=FakeCalorieStore()
-        val client=FakeFatSecretClient().apply{canLoadDetails=true}
+        val client=FakeCalorieCatalogClient().apply{canLoadDetails=true}
         repeat(32){index->store.external+=ExternalDiaryEntryEntity(index+1L,"2026-09-12",MealType.LUNCH,(index+1).toString(),"s1",100_000,"g",index.toLong(),index.toLong())}
         val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher,client,{"owner-token"})
         advanceUntilIdle()
@@ -230,7 +230,7 @@ private class FakeCalorieStore:CalorieStore {
     }
 }
 
-private class FakeFatSecretClient:FatSecretClient {
+private class FakeCalorieCatalogClient:CalorieCatalogClient {
     val queries=mutableListOf<String>()
     val requestedIds=mutableListOf<String>()
     var canLoadDetails=false

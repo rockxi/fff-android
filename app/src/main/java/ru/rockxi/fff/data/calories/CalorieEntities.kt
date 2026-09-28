@@ -54,7 +54,7 @@ data class DiaryEntryEntity(
     val updatedAt: Long,
 )
 
-/** Only FatSecret identifiers and the user's own diary input are persisted.
+/** Only external catalog identifiers and the user's own diary input are persisted.
  * Names, serving labels and nutritional values are fetched for display and never written to Room.
  */
 @Entity(

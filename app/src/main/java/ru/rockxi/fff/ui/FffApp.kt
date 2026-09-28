@@ -59,7 +59,7 @@ fun FffApp() {
                 val model: CalorieViewModel = viewModel(
                     factory = CalorieViewModel.factory(
                         RepositoryCalorieStore(CalorieRepository(CalorieDatabase.get(context))),
-                        externalClient = ru.rockxi.fff.data.calories.HttpFatSecretClient(),
+                        externalClient = ru.rockxi.fff.data.calories.HttpCalorieCatalogClient(),
                         tokenProvider = { ru.rockxi.fff.data.harness.KeystoreHarnessTokenStore(context).load() },
                     ),
                 )

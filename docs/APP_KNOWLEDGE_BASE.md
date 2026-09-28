@@ -221,33 +221,32 @@ cannot be deleted until its diary entries are removed, and editing a food never
 rewrites historical snapshots.
 
 Calorie Tracker does not depend on Telegram. Local foods and manual diary entries
-remain fully offline. The optional FatSecret product search and GTIN barcode
-lookup use the same independent owner bearer as Harness, but no Telegram session.
-The Android app calls only the owner-authenticated FFF HTTPS proxy. OAuth 2
-Client ID/Secret are server environment variables and never enter the APK.
-Barcode scanning uses Google Code Scanner (EAN-8, UPC-A and EAN-13), with a
-manual product-creation fallback. The current FatSecret account grants only
-`basic`: food search and detail use the v1 endpoints successfully, while the
-remote barcode lookup reports a missing `barcode` scope until that access is
-enabled by FatSecret. Scanning and manual creation still work without it.
+remain fully offline. New online search, details and GTIN barcode lookup use
+perek.us through the owner-authenticated FFF HTTPS proxy and the same independent
+owner bearer as Harness. Android selects the new catalog with the
+`X-FFF-Catalog: perek` header, allowing an old APK to keep its prior response
+contract during rollout. `PEREK_API_KEY` stays on the FFF server and never enters
+the APK. Barcode scanning uses Google Code Scanner (EAN-8, UPC-A and EAN-13),
+with a manual product-creation fallback. New provider IDs are canonical URL-safe
+`p_` tokens; old numeric FatSecret IDs remain readable through the legacy
+server-side detail route so existing diary history survives an in-place update.
 
 Schema version 2 adds `calorie_external_entries` and
 `calorie_external_day_totals` through a lossless Room 1→2 migration. External
-entries persist FatSecret `food_id`/`serving_id` plus the user's date, meal,
+entries persist provider `food_id`/`serving_id` plus the user's date, meal,
 quantity and unit (`g` or `ml`); they never persist names, brands, labels or
 per-product nutrient values. The user's aggregate consumed calories and macros
 for each day persist in the second table, so the daily summary stays available
 offline. Product-level details are fetched again as needed; transient responses
 are purged after 24 hours and cannot be shown offline once unavailable. The
-UI links `Powered by fatsecret Platform API` wherever FatSecret data appears,
-including before login on the launcher. Because original per-entry nutrition is
-not stored and FatSecret values may change, external entries are not
+UI links `Данные: perek.us` to each opened product's source page and keeps
+FatSecret attribution on legacy details and the pre-login launcher. Because original per-entry
+nutrition is not stored and provider values may change, external entries are not
 automatically recalculated. Their detail view instead offers a custom manual
 correction of the external daily aggregate and optional deletion of the selected
 ID-only entry in one atomic transaction. This allows an incorrect portion to be
-fixed without persisting provider nutrient snapshots. Confirm the FatSecret
-treatment of permanent *derived daily user
-aggregates* before a broad public release.
+fixed without persisting provider nutrient snapshots. The original FatSecret
+terms still apply to historical content if that legacy lookup remains enabled.
 
 Calorie data is not included in the versioned Finance JSON backup, and
 Android platform backup remains disabled by the manifest. There is currently no
@@ -276,6 +275,10 @@ one-time consent for that network check and reports when the installed version i
 already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.14.1` (`versionCode 24`) switches new Calorie Tracker catalog search,
+product details and barcode lookup to perek.us, while preserving legacy numeric
+FatSecret diary lookups and existing offline daily aggregates.
 
 Version `0.13.1` (`versionCode 22`) aligns the launcher and mini-app interface:
 shared typography and spacing roles, safe-area spacing, clearer Finance tabs,

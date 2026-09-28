@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import ru.rockxi.fff.data.harness.readBounded
 
-/** Transient FatSecret values. Never store this object or its fields in Room or preferences. */
+/** Transient catalog values. Never store provider names or nutrition in Room. */
 internal data class ExternalFoodSummary(val id: String, val name: String, val brand: String?, val fetchedAtSeconds: Long)
 internal data class ExternalServing(
     val id: String,
@@ -45,9 +45,11 @@ internal data class ExternalFood(
     val brand: String?,
     val servings: List<ExternalServing>,
     val fetchedAtSeconds: Long,
+    val source: String = "Perek",
+    val sourceUrl: String? = null,
 )
 
-internal fun fatSecretContentFresh(fetchedAtSeconds: Long, nowSeconds: Long): Boolean =
+internal fun catalogContentFresh(fetchedAtSeconds: Long, nowSeconds: Long): Boolean =
     fetchedAtSeconds > 0 && nowSeconds >= fetchedAtSeconds && nowSeconds - fetchedAtSeconds < 86_400
 
 /** Calculates a user's consumed totals; it must not be used to persist per-food API values. */
@@ -71,17 +73,17 @@ internal fun externalPortionNutrition(serving: ExternalServing, amountGramsMg: L
     }
 }
 
-internal interface FatSecretClient {
+internal interface CalorieCatalogClient {
     suspend fun search(token: String, query: String): List<ExternalFoodSummary>
     suspend fun food(token: String, id: String): ExternalFood
     suspend fun barcode(token: String, gtin13: String): ExternalFood
 }
 
-internal object FatSecretJson {
+internal object CalorieCatalogJson {
     private val json = Json { ignoreUnknownKeys = true }
     fun search(body: String): List<ExternalFoodSummary> {
         val root = json.parseToJsonElement(body).jsonObject
-        require(root.str("source") == "FatSecret") { "Неизвестный источник продуктов" }
+        require(root.str("source") == "Perek") { "Неизвестный источник продуктов" }
         val fetchedAt = root.long("fetchedAt")
         return (root["items"] as? JsonArray ?: error("Некорректный ответ поиска"))
             .take(50).map { item ->
@@ -92,7 +94,8 @@ internal object FatSecretJson {
 
     fun food(body: String): ExternalFood {
         val obj = json.parseToJsonElement(body).jsonObject
-        require(obj.str("source") == "FatSecret") { "Неизвестный источник продуктов" }
+        val source = obj.str("source")
+        require(source == "Perek" || source == "FatSecret") { "Неизвестный источник продуктов" }
         val fetchedAt = obj.long("fetchedAt")
         val servings = (obj["servings"] as? JsonArray ?: error("Некорректные порции"))
             .take(100).mapNotNull { value ->
@@ -110,7 +113,7 @@ internal object FatSecretJson {
                     amount, unit,
                 ).takeIf { listOf(it.calories, it.protein, it.fat, it.carbs).all { n -> n.isFinite() && n >= 0.0 } }
             }
-        return ExternalFood(obj.str("id"), obj.str("name"), obj.optString("brand"), servings, fetchedAt)
+        return ExternalFood(obj.str("id"), obj.str("name"), obj.optString("brand"), servings, fetchedAt, source, obj.optString("sourceUrl"))
     }
 
     private fun JsonObject.str(key: String): String = this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
@@ -121,19 +124,19 @@ internal object FatSecretJson {
         ?: error("Некорректное время ответа")
 }
 
-internal class HttpFatSecretClient : FatSecretClient {
+internal class HttpCalorieCatalogClient : CalorieCatalogClient {
     private val base = "https://fff.rockxi.ru/api/harness/calories"
     override suspend fun search(token: String, query: String): List<ExternalFoodSummary> {
         require(query.trim().length in 2..100) { "Введите от 2 до 100 символов" }
-        return FatSecretJson.search(get(token, "search?q=${encode(query.trim())}"))
+        return CalorieCatalogJson.search(get(token, "search?q=${encode(query.trim())}"))
     }
     override suspend fun food(token: String, id: String): ExternalFood {
-        require(id.matches(Regex("[1-9][0-9]{0,17}"))) { "Некорректный ID продукта" }
-        return FatSecretJson.food(get(token, "foods/$id"))
+        require(id.matches(Regex("(?:[1-9][0-9]{0,18}|p_[A-Za-z0-9_-]{2,220})"))) { "Некорректный ID продукта" }
+        return CalorieCatalogJson.food(get(token, "foods/$id"))
     }
     override suspend fun barcode(token: String, gtin13: String): ExternalFood {
         require(gtin13.matches(Regex("[0-9]{13}"))) { "Некорректный штрихкод" }
-        return FatSecretJson.food(get(token, "barcodes/$gtin13"))
+        return CalorieCatalogJson.food(get(token, "barcodes/$gtin13"))
     }
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
     private fun get(token: String, path: String): String {
@@ -144,6 +147,7 @@ internal class HttpFatSecretClient : FatSecretClient {
             connectTimeout = 10_000
             readTimeout = 35_000
             setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("X-FFF-Catalog", "perek")
             setRequestProperty("Accept", "application/json")
         }
         try {
@@ -157,12 +161,10 @@ internal class HttpFatSecretClient : FatSecretClient {
                 val providerError = runCatching {
                     Json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.contentOrNull
                 }.getOrNull()
-                if (path.startsWith("barcodes/") && providerError == "FatSecret barcode scope unavailable") {
-                    error("FatSecret пока не разрешил поиск по штрихкоду. Создайте продукт вручную или повторите позже")
-                }
-                error("FatSecret временно недоступен. Попробуйте позже")
+                if (providerError == "perek.us is not configured") error("Поиск продуктов пока не настроен на сервере")
+                error("Каталог продуктов временно недоступен. Попробуйте позже")
             }
-            if (status !in 200..299) error("Не удалось загрузить данные FatSecret ($status)")
+            if (status !in 200..299) error("Не удалось загрузить данные каталога ($status)")
             return body
         } finally {
             connection.disconnect()

@@ -280,7 +280,18 @@ Room schema/export and migration coverage where applicable, Compose semantics
 coverage for critical interactions, and pass the repository's complete Gradle
 gate before release.
 
-## FatSecret search and scanner extension (2026-09-28)
+## perek.us catalog migration (2026-09-28)
+
+- New online search and barcode lookup use the owner-authenticated FFF proxy to
+  perek.us. Russian search is supported; the API key stays on the server.
+- Provider IDs are opaque `p_` tokens. Existing numeric FatSecret diary IDs
+  continue to load historical detail through the read-only legacy route.
+- Product detail and portion views link `Данные: perek.us` to the exact product
+  page. Source names and nutrition remain transient; only user-entered IDs,
+  portions and durable aggregate day totals remain in Room.
+- In-place update keeps schema version 2 and all existing diary history intact.
+
+## FatSecret search and scanner extension (historical, 2026-09-28)
 
 This section extends the original local-only MVP above; its earlier exclusion of
 barcode search describes that original release, not the current feature branch.

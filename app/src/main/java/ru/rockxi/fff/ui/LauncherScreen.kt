@@ -107,6 +107,14 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
             Text("Проверить обновления", modifier = Modifier.padding(start = 8.dp))
         }
         Text(
+            "Данные о продуктах: perek.us",
+            color = FffMuted,
+            fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .clickable { uriHandler.openUri("https://perek.us") }
+                .padding(vertical = 14.dp),
+        )
+        Text(
             "Powered by fatsecret Platform API",
             color = FffMuted,
             fontSize = 12.sp,

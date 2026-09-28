@@ -125,8 +125,8 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
             viewModel.addExternal(food,serving,externalMeal,amount,{viewModel.clearExternalSelection()},invalid)
         }
     }
-    if(scannedCode==null && s.externalDetailBusy) FffModal("Загружаем продукт",{viewModel.clearExternalSelection()},dismissEnabled=false){LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime);FatSecretAttribution()}
-    if(scannedCode==null && addMeal==null && s.externalError!=null && s.externalSelected==null && !s.externalDetailBusy) FffModal("Не удалось открыть продукт",{viewModel.clearExternalSelection()},"Закрыть",{viewModel.clearExternalSelection()}){Text(s.externalError.orEmpty(),color=Protein);FatSecretAttribution()}
+    if(scannedCode==null && s.externalDetailBusy) FffModal("Загружаем продукт",{viewModel.clearExternalSelection()},dismissEnabled=false){LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime);CatalogAttribution()}
+    if(scannedCode==null && addMeal==null && s.externalError!=null && s.externalSelected==null && !s.externalDetailBusy) FffModal("Не удалось открыть продукт",{viewModel.clearExternalSelection()},"Закрыть",{viewModel.clearExternalSelection()}){Text(s.externalError.orEmpty(),color=Protein);CatalogAttribution()}
     externalHistory?.let { entry -> ExternalHistoryModal(entry,s.externalDetails[entry.foodId],s.externalHistoryBusy,s.externalHistoryError,{viewModel.refreshExternalHistory(entry.foodId)},{externalHistory=null;correctingExternal=entry}){externalHistory=null} }
     correctingExternal?.let { entry -> ExternalDayCorrectionModal(entry,s.externalDayTotal,s.busy,{correctingExternal=null}) { totals,deleteEntry ->
         viewModel.correctExternalDay(LocalDate.parse(entry.localDate),if(deleteEntry)entry.id else null,totals){correctingExternal=null}
@@ -155,7 +155,8 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(prev,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronLeft,"Предыдущий день",tint=CalLime)};Surface(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!s.busy,onClick=date),shape=RoundedCornerShape(15.dp),color=CalSurface,border=BorderStroke(1.dp,CalLime.copy(.35f))){Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Rounded.CalendarMonth,null,tint=CalLime);Spacer(Modifier.width(8.dp));Text(formatCalorieDate(s.date,s.today),color=CalText,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)}};IconButton(next,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronRight,"Следующий день",tint=CalLime)}} }
         item { SummaryCard(s) }
         meals.forEach { (meal,label) -> item(key="head-$meal") { MealHeader(label,s.mealTotal(meal),s.externalEntries.any{it.mealType==meal},!s.busy){add(meal)} }; val values=s.entries.filter{it.mealType==meal}; val external=s.externalEntries.filter{it.mealType==meal}; if(values.isEmpty()&&external.isEmpty()) item(key="empty-$meal"){Text("Пока пусто · нажмите +, чтобы добавить",color=CalMuted,fontSize=12.sp,modifier=Modifier.padding(start=8.dp,end=8.dp,bottom=4.dp))} else {items(values,key={"local-${it.id}"}){entry->EntryRow(entry,!s.busy){edit(entry)}};items(external,key={"external-${it.id}"}){entry->ExternalEntryRow(entry,s.externalDetails[entry.foodId],entry.foodId in s.externalDetailFailedIds){openExternal(entry)}}} }
-        item { FatSecretAttribution() }
+        item { CatalogAttribution() }
+        if (s.externalEntries.any { it.foodId.all(Char::isDigit) }) item { CatalogAttribution(legacy = true) }
         item { Spacer(Modifier.height(20.dp)) }
     }
 }
@@ -165,25 +166,28 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
 @Composable private fun MealHeader(label:String,kcal:Long,hasExternal:Boolean,enabled:Boolean,add:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(label,color=CalText,fontSize=19.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));Text(if(hasExternal)"Локально $kcal ккал" else "$kcal ккал",color=CalMuted,fontSize=if(hasExternal)12.sp else 14.sp);IconButton(add,Modifier.size(48.dp),enabled=enabled){Icon(Icons.Rounded.Add,"Добавить в $label",tint=CalLime)}}}
 @Composable private fun EntryRow(e:DiaryEntryEntity,enabled:Boolean,open:()->Unit){Surface(Modifier.fillMaxWidth().heightIn(min=58.dp).clickable(enabled=enabled,onClick=open),shape=RoundedCornerShape(16.dp),color=CalSurface){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(e.displayNameSnapshot,color=CalText,fontWeight=FontWeight.SemiBold);Text(e.amountGramsMg?.let{"${gramsText(it)} г"}?:"Быстрая запись",color=CalMuted,fontSize=12.sp)};Text("${e.caloriesKcal} ккал",color=CalLime,fontWeight=FontWeight.Bold)}}}
 @Composable private fun ExternalEntryRow(e:ExternalDiaryEntryEntity,food:ExternalFood?,failed:Boolean,open:()->Unit){
-    val fresh=food?.takeIf{fatSecretContentFresh(it.fetchedAtSeconds,System.currentTimeMillis()/1000)}
+    val fresh=food?.takeIf{catalogContentFresh(it.fetchedAtSeconds,System.currentTimeMillis()/1000)}
+    val provider=if(e.foodId.all(Char::isDigit))"FatSecret" else "perek.us"
     Surface(Modifier.fillMaxWidth().heightIn(min=58.dp).clickable(onClick=open),shape=RoundedCornerShape(16.dp),color=CalSurface){
         Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){
             Column(Modifier.weight(1f)){
-                Text(fresh?.name?:"Продукт FatSecret #${e.foodId}",color=CalText,fontWeight=FontWeight.SemiBold)
-                Text("${gramsText(e.amountGramsMg)} ${e.amountUnit} · ${if(fresh!=null)"FatSecret" else if(failed)"не загружено, нажмите повторить" else "подробности доступны онлайн"}",color=CalMuted,fontSize=12.sp)
+                Text(fresh?.name?:"Продукт из $provider",color=CalText,fontWeight=FontWeight.SemiBold)
+                Text("${gramsText(e.amountGramsMg)} ${e.amountUnit} · ${if(fresh!=null)provider else if(failed)"не загружено, нажмите повторить" else "подробности доступны онлайн"}",color=CalMuted,fontSize=12.sp)
             }
-            Icon(Icons.Rounded.CloudSync,"Подробности загружаются из FatSecret",tint=CalMuted)
+            Icon(Icons.Rounded.CloudSync,"Подробности загружаются из $provider",tint=CalMuted)
         }
     }
 }
 @Composable private fun ExternalHistoryModal(entry:ExternalDiaryEntryEntity,food:ExternalFood?,loading:Boolean,error:String?,retry:()->Unit,correct:()->Unit,dismiss:()->Unit){
-    val fresh=food?.takeIf{fatSecretContentFresh(it.fetchedAtSeconds,System.currentTimeMillis()/1000)}
+    val fresh=food?.takeIf{catalogContentFresh(it.fetchedAtSeconds,System.currentTimeMillis()/1000)}
+    val legacy=entry.foodId.all(Char::isDigit)
+    val provider=if(legacy)"FatSecret" else "perek.us"
     val serving=fresh?.servings?.firstOrNull{it.id==entry.servingId}
     val nutrients=serving?.takeIf{it.measureUnit==entry.amountUnit}?.let{runCatching{externalPortionNutrition(it,entry.amountGramsMg)}.getOrNull()}
-    FffModal(fresh?.name?:"Продукт FatSecret",dismiss){
+    FffModal(fresh?.name?:"Продукт из $provider",dismiss){
         Text("${gramsText(entry.amountGramsMg)} ${entry.amountUnit} · ${mealName(entry.mealType)} · ${entry.localDate}",color=CalMuted)
         if(fresh==null) {
-            Text("История и итог дня доступны офлайн. Для названия и состава подключитесь к сети; они повторно загружаются из FatSecret.",color=CalMuted)
+            Text("История и итог дня доступны офлайн. Для названия и состава подключитесь к сети; они повторно загружаются из $provider.",color=CalMuted)
             if(loading) LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime)
             error?.let{Text(it,color=Protein,fontSize=12.sp)}
             OutlinedButton(retry,Modifier.fillMaxWidth().heightIn(min=48.dp),enabled=!loading){Text("Загрузить подробности")}
@@ -191,11 +195,11 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         else {
             fresh.brand?.let{Text(it,color=CalMuted)}
             serving?.let{Text(it.description,color=CalMuted)}
-            nutrients?.let{NutritionPreview(it)} ?: Text("Информация об этой порции больше не доступна в FatSecret.",color=CalMuted)
-            Text("Состав показан по текущим данным FatSecret; сохранённый итог дня не меняется.",color=CalMuted,fontSize=12.sp)
+            nutrients?.let{NutritionPreview(it)} ?: Text("Информация об этой порции больше не доступна в каталоге.",color=CalMuted)
+            Text("Данные показаны по текущей карточке $provider; сохранённый итог дня не меняется.",color=CalMuted,fontSize=12.sp)
         }
         OutlinedButton(correct,Modifier.fillMaxWidth().heightIn(min=48.dp)) { Text("Исправить итог дня") }
-        FatSecretAttribution()
+        CatalogAttribution(fresh, legacy)
     }
 }
 
@@ -207,8 +211,8 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
     var removeEntry by remember(entry.id){mutableStateOf(false)}
     val parsed=parseExternalDayCorrection(calories,protein,fat,carbs)
     FffModal("Исправить итог дня",dismiss,if(busy)"Сохранение…" else "Сохранить итог",{parsed.getOrNull()?.let{save(it,removeEntry)}},confirmEnabled=!busy&&parsed.isSuccess,dismissEnabled=!busy){
-        Text("${entry.localDate} · только сумма записей FatSecret за день",color=CalMuted)
-        Text("Это ручная корректировка итога. Исходная пищевая ценность отдельных продуктов FatSecret не сохраняется. При удалении выбранной записи укажите ниже уже исправленный итог дня.",color=CalMuted,fontSize=13.sp)
+        Text("${entry.localDate} · сумма записей внешних каталогов за день",color=CalMuted)
+        Text("Это ручная корректировка итога. Исходная пищевая ценность отдельных продуктов не сохраняется. При удалении выбранной записи укажите ниже уже исправленный итог дня.",color=CalMuted,fontSize=13.sp)
         CalorieNumericInput("Калории, ккал",calories,{calories=it})
         MacroFields(protein,{protein=it},fat,{fat=it},carbs,{carbs=it})
         parsed.exceptionOrNull()?.message?.let{Text(it,color=Protein,fontSize=12.sp)}
@@ -232,7 +236,7 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
             Text(if(scanBusy)"Открываем сканер…" else "Сканировать штрихкод",fontWeight=FontWeight.SemiBold)
         }
         scanError?.let{Text(it,color=Protein,fontSize=12.sp,modifier=Modifier.semantics{contentDescription=it})}
-        Text("Ищите в своих продуктах и FatSecret. Для онлайн-поиска подключите FFF в разделе Harness.",color=CalMuted,fontSize=12.sp)
+        Text("Свои продукты доступны офлайн. Поиск perek.us работает на русском при подключении к сети.",color=CalMuted,fontSize=12.sp)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
             OutlinedButton(quick,Modifier.weight(1f).heightIn(min=48.dp)){Text("Быстрая запись",maxLines=2)}
             OutlinedButton(create,Modifier.weight(1f).heightIn(min=48.dp)){Text("Новый продукт",maxLines=2)}
@@ -242,11 +246,11 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         if(values.isEmpty())Text(if(s.search.isBlank())"Добавьте первый продукт или быструю запись" else "В локальном каталоге ничего не найдено",color=CalMuted)
         else values.forEach{food->FoodChoice(food){select(food)}}
         if(s.search.trim().length>=2){
-            Text("FatSecret",color=CalLime,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp))
+            Text("perek.us",color=CalLime,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp))
             when {
                 s.externalSearchBusy -> LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime)
                 s.externalError!=null -> Text(s.externalError,color=Protein,fontSize=13.sp)
-                s.externalResults.isEmpty() -> Text("В FatSecret ничего не найдено",color=CalMuted,fontSize=13.sp)
+                s.externalResults.isEmpty() -> Text("В perek.us ничего не найдено. Попробуйте другое название или создайте свой продукт.",color=CalMuted,fontSize=13.sp)
                 else -> s.externalResults.forEach { item ->
                     Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable { selectExternal(item) }.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
                         Column(Modifier.weight(1f)){
@@ -258,7 +262,7 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
                 }
             }
         }
-        FatSecretAttribution()
+        CatalogAttribution()
         TextButton(all,Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Управление продуктами")}
     }
 }
@@ -273,15 +277,15 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
             }
         }
         when {
-            loading -> { Text("Ищем продукт в FatSecret…",color=CalMuted);LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime) }
+            loading -> { Text("Ищем продукт в perek.us…",color=CalMuted);LinearProgressIndicator(Modifier.fillMaxWidth(),color=CalLime) }
             food!=null -> {
                 Text(food.name,color=CalText,fontWeight=FontWeight.SemiBold)
                 food.brand?.let { Text(it,color=CalMuted) }
-                Button({select(food)},Modifier.fillMaxWidth().heightIn(min=52.dp),colors=ButtonDefaults.buttonColors(containerColor=CalLime,contentColor=CalBg)){Text("Добавить из FatSecret")}
+                Button({select(food)},Modifier.fillMaxWidth().heightIn(min=52.dp),colors=ButtonDefaults.buttonColors(containerColor=CalLime,contentColor=CalBg)){Text("Добавить из perek.us")}
             }
             else -> {Text(error?:"Продукт не найден. Можно создать свой по данным с упаковки.",color=CalMuted);OutlinedButton(retry,Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Повторить поиск")}}
         }
-        FatSecretAttribution()
+        CatalogAttribution(food)
         OutlinedButton({clipboard.setText(AnnotatedString(code))},Modifier.fillMaxWidth().heightIn(min=48.dp)){
             Icon(Icons.Rounded.ContentCopy,null)
             Spacer(Modifier.width(8.dp))
@@ -289,9 +293,12 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         }
     }
 }
-@Composable private fun FatSecretAttribution(){
+@Composable private fun CatalogAttribution(food: ExternalFood? = null, legacy: Boolean = false){
     val uri=LocalUriHandler.current
-    Text("Powered by fatsecret Platform API",color=CalMuted,fontSize=12.sp,modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).clickable{uri.openUri("https://platform.fatsecret.com")}.wrapContentHeight(Alignment.CenterVertically).semantics{contentDescription="Powered by fatsecret Platform API, открыть сайт FatSecret"},textAlign=TextAlign.Center)
+    val old=legacy || food?.source=="FatSecret"
+    val label=if(old)"Powered by fatsecret Platform API" else "Данные: perek.us"
+    val target=if(old)"https://platform.fatsecret.com" else food?.sourceUrl?.takeIf { it.startsWith("https://perek.us/food/") }?:"https://perek.us"
+    Text(label,color=CalMuted,fontSize=12.sp,modifier=Modifier.fillMaxWidth().heightIn(min=48.dp).clickable{uri.openUri(target)}.wrapContentHeight(Alignment.CenterVertically).semantics{contentDescription="$label, открыть источник"},textAlign=TextAlign.Center)
 }
 
 @Composable private fun ExternalAmountModal(food:ExternalFood,meal:MealType,busy:Boolean,dismiss:()->Unit,save:(ExternalServing,String,(String)->Unit)->Unit){
@@ -306,11 +313,11 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
         food.servings.filter{it.measureUnit!=null}.forEach { option ->
             FffChoiceRow(serving?.id==option.id,{serving=option;amount=BigDecimal.valueOf(option.measureAmount!!).stripTrailingZeros().toPlainString();error=null},"${option.description} · ${BigDecimal.valueOf(option.measureAmount!!).stripTrailingZeros().toPlainString()} ${option.measureUnit}")
         }
-        if(serving==null) Text("FatSecret не указал массу или объём этой порции. Можно создать свой продукт вручную.",color=Protein)
+        if(serving==null) Text("Каталог не указал массу или объём этой порции. Можно создать свой продукт вручную.",color=Protein)
         else CalorieNumericInput("Количество, ${serving?.measureUnit}",amount,{amount=it;error=null},error=error?:grams.error)
         totals?.let { NutritionPreview(it) }
         Text("Запись сохранит только ID продукта и порцию. Итоги дня останутся офлайн; подробности загрузятся при подключении к сети.",color=CalMuted,fontSize=12.sp)
-        FatSecretAttribution()
+        CatalogAttribution(food)
     }
 }
 @Composable private fun FoodChoice(food:FoodEntity,click:()->Unit){Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(onClick=click).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(food.name,color=CalText);Text("на 100 г · Б ${gramsText(food.proteinPer100gMg)} · Ж ${gramsText(food.fatPer100gMg)} · У ${gramsText(food.carbPer100gMg)}",color=CalMuted,fontSize=10.sp)};Text("${food.caloriesPer100gKcal} ккал",color=CalLime)}}

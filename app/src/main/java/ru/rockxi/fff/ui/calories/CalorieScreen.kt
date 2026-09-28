@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
@@ -34,6 +36,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import ru.rockxi.fff.data.calories.*
 import ru.rockxi.fff.ui.components.*
+import ru.rockxi.fff.ui.theme.FffMetrics
 
 private val CalBg=Color(0xFF07100B); private val CalSurface=Color(0xFF101B14); private val CalLime=Color(0xFFB7F35A)
 private val CalText=Color(0xFFF1F7ED); private val CalMuted=Color(0xFF95A28F); private val Protein=Color(0xFFFF8D82); private val Fat=Color(0xFFFFC766); private val Carbs=Color(0xFF63DCEB)
@@ -63,9 +66,9 @@ private val meals = listOf(MealType.BREAKFAST to "Завтрак", MealType.LUNC
 }
 
 @Composable private fun Diary(s:CalorieState,back:()->Unit,prev:()->Unit,next:()->Unit,date:()->Unit,settings:()->Unit,add:(MealType)->Unit,edit:(DiaryEntryEntity)->Unit){
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item { Row(verticalAlignment=Alignment.CenterVertically){IconButton(back,Modifier.size(48.dp)){Icon(Icons.Rounded.ArrowBack,"Назад",tint=CalText)};Column(Modifier.weight(1f)){Text("NUTRITION LOG",color=CalLime,fontSize=10.sp,letterSpacing=2.sp);Text("Калории",color=CalText,fontSize=26.sp,fontWeight=FontWeight.Bold)};IconButton(settings,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.Settings,"Настройки калорий",tint=CalLime)}} }
-        item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){IconButton(prev,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronLeft,"Предыдущий день",tint=CalLime)};Surface(Modifier.heightIn(min=48.dp).clickable(enabled=!s.busy,onClick=date),shape=RoundedCornerShape(15.dp),color=CalSurface,border=BorderStroke(1.dp,CalLime.copy(.35f))){Row(Modifier.padding(horizontal=18.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Rounded.CalendarMonth,null,tint=CalLime);Spacer(Modifier.width(8.dp));Text(formatCalorieDate(s.date,s.today),color=CalText,fontWeight=FontWeight.Bold)}};IconButton(next,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronRight,"Следующий день",tint=CalLime)}} }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),contentPadding=PaddingValues(FffMetrics.pageGutter),verticalArrangement=Arrangement.spacedBy(FffMetrics.itemGap)){
+        item { Row(verticalAlignment=Alignment.CenterVertically){IconButton(back,Modifier.size(48.dp)){Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Назад",tint=CalText)};Column(Modifier.weight(1f)){Text("NUTRITION LOG",color=CalLime,fontSize=10.sp,letterSpacing=2.sp);Text("Калории",color=CalText,fontSize=26.sp,fontWeight=FontWeight.Bold)};IconButton(settings,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.Settings,"Настройки калорий",tint=CalLime)}} }
+        item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(prev,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronLeft,"Предыдущий день",tint=CalLime)};Surface(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!s.busy,onClick=date),shape=RoundedCornerShape(15.dp),color=CalSurface,border=BorderStroke(1.dp,CalLime.copy(.35f))){Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Rounded.CalendarMonth,null,tint=CalLime);Spacer(Modifier.width(8.dp));Text(formatCalorieDate(s.date,s.today),color=CalText,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)}};IconButton(next,Modifier.size(48.dp),enabled=!s.busy){Icon(Icons.Rounded.ChevronRight,"Следующий день",tint=CalLime)}} }
         item { SummaryCard(s) }
         meals.forEach { (meal,label) -> item(key="head-$meal") { MealHeader(label,s.mealTotal(meal),!s.busy){add(meal)} }; val values=s.entries.filter{it.mealType==meal}; if(values.isEmpty()) item(key="empty-$meal"){Text("Пока пусто · нажмите +, чтобы добавить",color=CalMuted,fontSize=12.sp,modifier=Modifier.padding(start=8.dp,end=8.dp,bottom=4.dp))} else items(values,key={it.id}){entry->EntryRow(entry,!s.busy){edit(entry)}} }
         item { Spacer(Modifier.height(20.dp)) }

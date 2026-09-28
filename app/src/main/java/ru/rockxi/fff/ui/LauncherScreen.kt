@@ -6,14 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,6 +53,7 @@ import ru.rockxi.fff.model.AppCatalog
 import ru.rockxi.fff.model.FffApplication
 import ru.rockxi.fff.navigation.Destination
 import ru.rockxi.fff.ui.theme.FffLine
+import ru.rockxi.fff.ui.theme.FffMetrics
 import ru.rockxi.fff.ui.theme.FffMint
 import ru.rockxi.fff.ui.theme.FffMuted
 import ru.rockxi.fff.ui.theme.FffSurface
@@ -58,11 +64,12 @@ import ru.rockxi.fff.update.UpdateRequests
 @Composable
 fun LauncherScreen(onOpen: (Destination) -> Unit) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = FffMetrics.pageGutter),
     ) {
-        Spacer(Modifier.height(52.dp))
+        Spacer(Modifier.height(12.dp))
         BrandBar()
-        Spacer(Modifier.height(38.dp))
+        Spacer(Modifier.height(24.dp))
         AccentLabel("PERSONAL OPERATING SYSTEM", FffMint)
         Text("Приложения", color = FffText, fontSize = 38.sp, fontWeight = FontWeight.SemiBold)
         Text(
@@ -74,7 +81,7 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
         )
         AppCatalog.applications.chunked(2).forEachIndexed { rowIndex, applications ->
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 applications.forEachIndexed { columnIndex, app ->
@@ -87,11 +94,11 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
                 }
                 if (applications.size == 1) Spacer(Modifier.weight(1f))
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(FffMetrics.itemGap))
         }
         OutlinedButton(
             onClick = UpdateRequests::requestCheck,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = FffMetrics.touchTarget),
             shape = RoundedCornerShape(16.dp),
         ) {
             Icon(Icons.Rounded.SystemUpdate, contentDescription = null)
@@ -133,7 +140,7 @@ private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit, modif
         Destination.Calories -> Icons.Rounded.RestaurantMenu
     }
     Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(FffSurface)
+        modifier.fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(FffSurface)
             .border(1.dp, FffLine, RoundedCornerShape(16.dp)).clickable(onClick = onClick),
     ) {
         Box(
@@ -145,18 +152,19 @@ private fun AppCard(app: FffApplication, number: Int, onClick: () -> Unit, modif
                 modifier = Modifier.align(Alignment.TopStart).padding(10.dp).border(1.dp, accent.copy(alpha=.6f), CircleShape).padding(horizontal=7.dp, vertical=2.dp))
             Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp).size(28.dp))
         }
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.weight(1f).padding(12.dp)) {
             AccentLabel(app.kicker, accent)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(app.name, color = FffText, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
+                Text(app.name, color = FffText, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.weight(1f))
                 Icon(Icons.Rounded.ArrowOutward, contentDescription = "Открыть ${app.name}", tint = FffMuted, modifier = Modifier.size(18.dp))
             }
-            Text(app.description, color = Color(0xFF98A4AE), fontSize = 11.sp, lineHeight = 15.sp,
-                maxLines = 2, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+            Text(app.description, color = Color(0xFF98A4AE), fontSize = 12.sp, lineHeight = 16.sp,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+            Spacer(Modifier.weight(1f))
             Box(Modifier.fillMaxWidth().height(1.dp).background(FffLine))
-            Text(app.meta, color = Color(0xFF687682), fontSize = 9.sp, fontFamily = FontFamily.Monospace,
-                maxLines = 1, letterSpacing = .5.sp, modifier = Modifier.padding(top = 8.dp))
+            Text(app.meta, color = FffMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = .5.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }

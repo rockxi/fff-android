@@ -107,7 +107,9 @@ fun FinanceScreen(onBack: () -> Unit) {
                     NavigationBarItem(selected = tab == item, onClick = {
                         if (tab != item) selectedBudgetId = null
                         tab = item
-                    }, icon = { Icon(icon, item.title, Modifier.size(21.dp)) }, label = { Text(item.title, maxLines = 1, fontSize = 9.sp) })
+                    }, icon = { Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp)) }, label = {
+                        Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+                    }, alwaysShowLabel = true)
                 }
             }
         },

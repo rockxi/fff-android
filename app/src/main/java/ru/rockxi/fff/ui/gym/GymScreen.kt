@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.format.DateTimeFormatter
@@ -26,6 +28,7 @@ import java.time.LocalDate
 import java.util.Locale
 import ru.rockxi.fff.data.gym.*
 import ru.rockxi.fff.ui.components.*
+import ru.rockxi.fff.ui.theme.FffMetrics
 
 private val GymBg = Color(0xFF06110C); private val GymSurface = Color(0xFF0C2117); private val GymGreen = Color(0xFF65F2AB)
 private val GymGold = Color(0xFFFFD76A); private val GymText = Color(0xFFF0FFF7); private val GymMuted = Color(0xFF8CAD9C)
@@ -56,8 +59,8 @@ private val GymHistorySurface = Color(0xFF151B18); private val GymHistoryBorder 
 }
 
 @Composable private fun DayScreen(s: GymState, back: () -> Unit, calendar: () -> Unit, choose: () -> Unit, start: () -> Unit, open: (Long) -> Unit) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled = !s.busy) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = GymText) }; Column(Modifier.weight(1f)) { Text("GYM TRACKER", color = GymGreen, letterSpacing = 2.sp); Text(s.date.format(DateTimeFormatter.ofPattern("d MMMM, EEEE", Locale("ru"))), color = GymText, fontSize = 23.sp, fontWeight = FontWeight.Bold) }; IconButton(calendar, enabled = !s.busy) { Icon(Icons.Rounded.CalendarMonth, "Календарь тренировок", tint = GymGreen) } }
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(FffMetrics.pageGutter), verticalArrangement = Arrangement.spacedBy(FffMetrics.sectionGap)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled = !s.busy) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", tint = GymText) }; Column(Modifier.weight(1f)) { Text("GYM TRACKER", color = GymGreen, letterSpacing = 2.sp); Text(s.date.format(DateTimeFormatter.ofPattern("d MMMM, EEEE", Locale("ru"))), color = GymText, fontSize = 23.sp, fontWeight = FontWeight.Bold) }; IconButton(calendar, enabled = !s.busy) { Icon(Icons.Rounded.CalendarMonth, "Календарь тренировок", tint = GymGreen) } }
         Text(formatGymDay(s.date, s.today), color = GymMuted)
         if (s.summary.isEmpty()) EmptyDay(!s.busy, s.monthActivity.any { it.localDate == s.date.toString() }, start, choose) else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(s.summary, key = { it.exerciseId }) { item -> Surface(Modifier.fillMaxWidth().clickable(enabled=!s.busy) { open(item.exerciseId) }, shape = RoundedCornerShape(20.dp), color = GymSurface, border = BorderStroke(1.dp, Color(0xFF1E4934))) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.exerciseName, color = GymText, fontWeight = FontWeight.Bold, fontSize = 18.sp); Text(item.categoryName, color = GymMuted) }; Text("${item.setCount} подх.\n${item.totalRepetitions} повт.", color = GymGreen) } } }
@@ -89,8 +92,8 @@ private val GymHistorySurface = Color(0xFF151B18); private val GymHistoryBorder 
 }
 
 @Composable private fun ExerciseScreen(s: GymState, back: () -> Unit, addSet: () -> Unit, editSet: (GymSetEntity?) -> Unit, editExercise: () -> Unit, deleteExercise: () -> Unit, delete: (Long) -> Unit, openHistory: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled=!s.busy) { Icon(Icons.Rounded.ArrowBack, "К списку", tint = GymText) }; Column(Modifier.weight(1f)) { Text(s.selectedExercise!!.name, color = GymText, fontSize = 24.sp, fontWeight = FontWeight.Bold); Text("${s.categories.firstOrNull { it.id == s.selectedExercise.categoryId }?.name.orEmpty()} · ${formatGymDay(s.date, s.today)}", color = GymMuted) }; IconButton(editExercise, enabled=!s.busy) { Icon(Icons.Rounded.Edit, "Редактировать упражнение", tint = GymGreen) }; IconButton(deleteExercise, enabled=!s.busy) { Icon(Icons.Rounded.DeleteForever, "Удалить упражнение", tint=Color(0xFFFF8DA7)) } } }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = FffMetrics.pageGutter), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled=!s.busy) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "К списку", tint = GymText) }; Column(Modifier.weight(1f)) { Text(s.selectedExercise!!.name, color = GymText, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis); Text("${s.categories.firstOrNull { it.id == s.selectedExercise.categoryId }?.name.orEmpty()} · ${formatGymDay(s.date, s.today)}", color = GymMuted, maxLines = 1, overflow = TextOverflow.Ellipsis) }; IconButton(editExercise, enabled=!s.busy) { Icon(Icons.Rounded.Edit, "Редактировать упражнение", tint = GymGreen) }; IconButton(deleteExercise, enabled=!s.busy) { Icon(Icons.Rounded.DeleteForever, "Удалить упражнение", tint=Color(0xFFFF8DA7)) } } }
         item { Button(addSet, Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled=!s.busy, colors = ButtonDefaults.buttonColors(containerColor = GymGreen, contentColor = GymBg)) { Icon(Icons.Rounded.Add, null); Text("Добавить подход") } }
         if (s.sets.isEmpty()) item { Text(if (s.date == s.today) "Сегодня подходов пока нет" else "На эту дату подходов пока нет", color = GymMuted) }
         else items(s.sets, key = { "current-${it.set.id}" }) { item -> SetCard(item, !s.busy, { editSet(item.set) }, { delete(item.set.id) }) }
@@ -122,8 +125,8 @@ internal fun groupGymHistorySets(sets: List<GymSetWithRecord>): List<GymHistoryG
 
 @Composable private fun ExerciseHistoryScreen(s: GymState, back: () -> Unit) {
     val groups = remember(s.historySets) { groupGymHistorySets(s.historySets) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled = !s.busy) { Icon(Icons.Rounded.ArrowBack, "Вернуться к упражнению", tint = GymText) }; Column(Modifier.weight(1f)) { Text("История подходов", color = GymText, fontSize = 23.sp, fontWeight = FontWeight.Bold); Text(s.selectedExercise?.name.orEmpty(), color = GymMuted) } } }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = FffMetrics.pageGutter), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(FffMetrics.itemGap)) {
+        item { Row(verticalAlignment = Alignment.CenterVertically) { IconButton(back, enabled = !s.busy) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Вернуться к упражнению", tint = GymText) }; Column(Modifier.weight(1f)) { Text("История подходов", color = GymText, fontSize = 23.sp, fontWeight = FontWeight.Bold); Text(s.selectedExercise?.name.orEmpty(), color = GymMuted) } } }
         if (groups.isEmpty()) item { Text("История пока пуста", color = GymMuted) }
         groups.forEach { group ->
             item(key = "date-${group.date}") { Text(group.date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")), color = GymHistoryText, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }

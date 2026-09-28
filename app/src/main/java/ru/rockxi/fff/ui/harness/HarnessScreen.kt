@@ -108,5 +108,17 @@ internal fun nextHarnessFollowTail(current:Boolean,wasScrolling:Boolean,isScroll
 internal fun shouldAutoScrollHarnessTail(followTail:Boolean,isScrollInProgress:Boolean):Boolean=followTail&&!isScrollInProgress
 internal fun formatHarnessActivity(value:String):String=runCatching{OffsetDateTime.parse(value).format(DateTimeFormatter.ofPattern("dd.MM.yyyy · HH:mm"))}.getOrElse{value.take(16).ifBlank{"—"}}
 
-@Composable private fun AccessIntro(error:String?,busy:Boolean,connect:(String)->Unit){var key by remember{mutableStateOf("")};Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.Key,null,tint=FffMint,modifier=Modifier.size(48.dp));Text("Подключить ассистента",fontWeight=FontWeight.Bold,fontSize=22.sp);Text("Введите личный ключ доступа. Он нужен только один раз и не сохраняется на устройстве.",color=FffMuted,modifier=Modifier.padding(vertical=14.dp));OutlinedTextField(key,{key=it.take(512)},Modifier.fillMaxWidth(),label={Text("Ключ доступа")},singleLine=true,visualTransformation=PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,keyboardType=KeyboardType.Password),enabled=!busy);Button({connect(key);key=""},Modifier.fillMaxWidth().padding(top=12.dp),enabled=!busy&&key.isNotBlank()){Text(if(busy)"Подключаю…" else "Подключить")};error?.let{Text(it,color=Color(0xFFFF7C9B),modifier=Modifier.padding(top=12.dp))}}}
+@Composable private fun AccessIntro(error:String?,busy:Boolean,connect:(String)->Unit){
+ var key by remember{mutableStateOf("")}
+ Box(Modifier.fillMaxSize().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),contentAlignment=Alignment.Center){
+  Column(Modifier.fillMaxWidth().widthIn(max=480.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+   Icon(Icons.Rounded.Key,null,tint=FffMint,modifier=Modifier.size(40.dp))
+   Text("Подключить ассистента",style=MaterialTheme.typography.titleLarge)
+   Text("Введите личный ключ доступа. Он нужен только один раз и не сохраняется на устройстве.",color=FffMuted,style=MaterialTheme.typography.bodyMedium)
+   OutlinedTextField(key,{key=it.take(512)},Modifier.fillMaxWidth(),label={Text("Ключ доступа")},singleLine=true,visualTransformation=PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,keyboardType=KeyboardType.Password),enabled=!busy)
+   Button({connect(key);key=""},Modifier.fillMaxWidth().heightIn(min=48.dp),enabled=!busy&&key.isNotBlank()){Text(if(busy)"Подключаю…" else "Подключить")}
+   error?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)}
+  }
+ }
+}
 @Composable private fun Revoking(state:HarnessState,retry:()->Unit)=Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){if(state.loading)CircularProgressIndicator(color=FffMint);Text("Завершаю отключение…",fontWeight=FontWeight.Bold,modifier=Modifier.padding(12.dp));state.error?.let{Text(it,color=Color(0xFFFF7C9B));Button(retry){Text("Повторить")}}}

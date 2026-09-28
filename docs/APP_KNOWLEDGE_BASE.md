@@ -238,7 +238,7 @@ flows.
 
 ## UI system
 
-Theme tokens are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and controls belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent. Finance text inputs expose focus, supporting and field-error states; custom single-choice rows and four-column emoji/category grids provide checked radio semantics and at least 48dp touch targets.
+Theme tokens and the shared typography/spacing roles are in `ui/theme/Theme.kt`. Reusable custom modal surfaces and controls belong in `ui/components`. Product dialogs use Compose `Dialog` plus the FFF surface/theme rather than platform-styled Material `AlertDialog`, so narrow-screen layout and actions are consistent; this includes Remote Control host and Codex dialogs. Launcher, Gym and Calorie pages account for system bars, and dense navigation labels use the shared Material type scale. Finance text inputs expose focus, supporting and field-error states; custom single-choice rows and four-column emoji/category grids provide checked radio semantics and at least 48dp touch targets.
 
 ## Updates and releases
 
@@ -248,6 +248,10 @@ one-time consent for that network check and reports when the installed version i
 already current; it does not silently enable automatic checks.
 
 GitHub Actions workflows are in `.github/workflows`. Main pushes run CI. Signed `v*` tags build and publish the signed APK and checksum. Never change the application ID or signing key if in-place upgrades must continue working.
+
+Version `0.13.1` (`versionCode 22`) aligns the launcher and mini-app interface:
+shared typography and spacing roles, safe-area spacing, clearer Finance tabs,
+responsive Gym and Calorie headers, and consistent Remote Control dialogs.
 
 Version `0.13.0` (`versionCode 21`) adds immediate read-only context from the six
 newest previous sets on every Gym exercise screen and a complete exercise history

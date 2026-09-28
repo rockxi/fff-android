@@ -11,6 +11,8 @@ import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -32,6 +34,10 @@ internal interface CalorieStore {
     suspend fun updateFoodEntry(id: Long, foodId: Long, date: LocalDate, meal: MealType, amountMg: Long)
     suspend fun updateQuickEntry(id: Long, name: String, date: LocalDate, meal: MealType, calories: Int, proteinMg: Long, fatMg: Long, carbMg: Long)
     suspend fun deleteEntry(id: Long)
+    suspend fun externalEntries(date: LocalDate): List<ExternalDiaryEntryEntity> = emptyList()
+    suspend fun externalDayTotal(date: LocalDate): NutritionTotals = NutritionTotals()
+    suspend fun addExternalEntry(foodId: String, servingId: String, date: LocalDate, meal: MealType, amountMg: Long, nutrition: NutritionTotals, amountUnit: String = "g"): Long = error("Внешний каталог недоступен")
+    suspend fun correctExternalDay(date: LocalDate, entryId: Long?, nutrition: NutritionTotals): Unit = error("Исправление дневника недоступно")
 }
 
 internal class RepositoryCalorieStore(private val repository: CalorieRepository) : CalorieStore {
@@ -49,6 +55,10 @@ internal class RepositoryCalorieStore(private val repository: CalorieRepository)
     override suspend fun updateFoodEntry(id: Long, foodId: Long, date: LocalDate, meal: MealType, amountMg: Long) = repository.updateFoodEntry(id, foodId, date, meal, amountMg)
     override suspend fun updateQuickEntry(id: Long, name: String, date: LocalDate, meal: MealType, calories: Int, proteinMg: Long, fatMg: Long, carbMg: Long) = repository.updateQuickEntry(id, name, date, meal, calories, proteinMg, fatMg, carbMg)
     override suspend fun deleteEntry(id: Long) = repository.deleteEntry(id)
+    override suspend fun externalEntries(date: LocalDate) = repository.externalEntries(date)
+    override suspend fun externalDayTotal(date: LocalDate) = repository.externalDayTotal(date)
+    override suspend fun addExternalEntry(foodId: String, servingId: String, date: LocalDate, meal: MealType, amountMg: Long, nutrition: NutritionTotals, amountUnit: String) = repository.addExternalEntry(foodId, servingId, date, meal, amountMg, nutrition, amountUnit)
+    override suspend fun correctExternalDay(date: LocalDate, entryId: Long?, nutrition: NutritionTotals) = repository.correctExternalDay(date, entryId, nutrition)
 }
 
 internal data class CalorieState(
@@ -61,10 +71,28 @@ internal data class CalorieState(
     val allFoods: List<FoodEntity> = emptyList(),
     val foods: List<FoodEntity> = emptyList(),
     val recents: List<RecentFood> = emptyList(),
+    val externalEntries: List<ExternalDiaryEntryEntity> = emptyList(),
+    val externalDayTotal: NutritionTotals = NutritionTotals(),
+    val externalResults: List<ExternalFoodSummary> = emptyList(),
+    val externalSelected: ExternalFood? = null,
+    val externalSearchBusy: Boolean = false,
+    val externalDetailBusy: Boolean = false,
+    val externalError: String? = null,
+    val externalDetails: Map<String, ExternalFood> = emptyMap(),
+    val externalDetailFailedIds: Set<String> = emptySet(),
+    val externalHistoryBusy: Boolean = false,
+    val externalHistoryError: String? = null,
     val search: String = "",
     val busy: Boolean = true,
     val error: String? = null,
-) { fun mealTotal(meal: MealType): Long = mealTotals[meal] ?: 0L }
+) {
+    fun mealTotal(meal: MealType): Long = mealTotals[meal] ?: 0L
+    fun overallTotals() = addNutrition(totals, externalDayTotal)
+}
+
+internal fun addNutrition(first: NutritionTotals, second: NutritionTotals) = try {
+    NutritionTotals(addExact(first.caloriesKcal, second.caloriesKcal), addExact(first.proteinMg, second.proteinMg), addExact(first.fatMg, second.fatMg), addExact(first.carbMg, second.carbMg))
+} catch (_: ArithmeticException) { throw IllegalStateException("Сумма дневника слишком велика") }
 
 internal data class CalorieProjection(val totals: NutritionTotals, val mealTotals: Map<MealType, Long>)
 internal fun checkedCalorieProjection(entries: List<DiaryEntryEntity>): CalorieProjection {
@@ -111,26 +139,125 @@ internal fun parseFoodForm(name: String, calories: String, protein: String, fat:
 internal fun parseQuickForm(name: String, calories: String, protein: String, fat: String, carbs: String): Result<FoodFormValues> =
     parseFoodForm(name, calories, protein, fat, carbs).mapCatching { require(it.calories > 0) { "Калории должны быть положительными" }; it }
 
+internal fun parseExternalDayCorrection(calories: String, protein: String, fat: String, carbs: String): Result<NutritionTotals> = runCatching {
+    val kcal = calories.trim().ifBlank { "0" }.toLongOrNull() ?: error("Калории должны быть целым числом")
+    require(kcal in 0..1_000_000) { "Калории должны быть от 0 до 1 000 000" }
+    fun macro(value: String): Long = parseGrams(value, required = false).let { require(it.valid) { it.error!! }; it.mg!! }
+    NutritionTotals(kcal, macro(protein), macro(fat), macro(carbs))
+}
+
 internal class CalorieViewModel(
     private val store: CalorieStore,
     clock: Clock = Clock.systemDefaultZone(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val externalClient: FatSecretClient? = null,
+    private val tokenProvider: () -> String? = { null },
+    private val nowEpochSeconds: () -> Long = { System.currentTimeMillis()/1000 },
 ) : ViewModel() {
     private val today = LocalDate.now(clock)
     private val mutable = MutableStateFlow(CalorieState(today = today, date = today))
     val state = mutable.asStateFlow()
+    private var externalSearchJob: Job? = null
+    private var externalDetailsJob: Job? = null
+    private var externalRequest = 0L
+    private var externalDetailRequest = 0L
     init { reload() }
 
     fun reload() = launchLoad {
         val entries=store.entries(mutable.value.date); val projection=checkedCalorieProjection(entries)
         val allFoods=store.foods()
-        mutable.value = mutable.value.copy(profile=store.profile(),entries=entries,totals=projection.totals,mealTotals=projection.mealTotals,allFoods=allFoods,foods=if(mutable.value.search.isBlank())allFoods else store.foods(mutable.value.search),recents=store.recentFoods())
+        mutable.value = mutable.value.copy(profile=store.profile(),entries=entries,totals=projection.totals,mealTotals=projection.mealTotals,allFoods=allFoods,foods=if(mutable.value.search.isBlank())allFoods else store.foods(mutable.value.search),recents=store.recentFoods(),externalEntries=store.externalEntries(mutable.value.date),externalDayTotal=store.externalDayTotal(mutable.value.date))
+        launchDetailsRefresh()
     }
-    fun selectDate(date: LocalDate) = launchLoad { val entries=store.entries(date);val projection=checkedCalorieProjection(entries);mutable.value=mutable.value.copy(date=date,entries=entries,totals=projection.totals,mealTotals=projection.mealTotals) }
+    fun selectDate(date: LocalDate) = launchLoad { val entries=store.entries(date);val projection=checkedCalorieProjection(entries);mutable.value=mutable.value.copy(date=date,entries=entries,totals=projection.totals,mealTotals=projection.mealTotals,externalEntries=store.externalEntries(date),externalDayTotal=store.externalDayTotal(date),externalDetails=emptyMap(),externalDetailFailedIds=emptySet());launchDetailsRefresh() }
     fun previousDay() = selectDate(mutable.value.date.minusDays(1))
     fun nextDay() = selectDate(mutable.value.date.plusDays(1))
-    fun search(query: String) = launchLoad { mutable.value = mutable.value.copy(search = query, foods = store.foods(query)) }
-    fun resetSearch() = launchLoad { val allFoods=store.foods(); mutable.value = mutable.value.copy(search="", allFoods=allFoods, foods=allFoods) }
+    fun search(query: String) {
+        externalSearchJob?.cancel()
+        val request = ++externalRequest
+        mutable.value = mutable.value.copy(search=query,foods=mutable.value.allFoods.filter { it.name.contains(query,true) },externalResults=emptyList(),externalError=null,externalSearchBusy=query.trim().length>=2)
+        if (query.trim().length < 2) return
+        externalSearchJob = viewModelScope.launch {
+            delay(350)
+            try {
+                val result = withContext(io) { externalClient?.search(requireToken(), query) ?: error("Поиск FatSecret недоступен") }
+                    .filter { fatSecretContentFresh(it.fetchedAtSeconds,nowEpochSeconds()) }
+                if (request == externalRequest) mutable.value = mutable.value.copy(externalResults=result,externalSearchBusy=false)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Throwable) { if (request == externalRequest) mutable.value=mutable.value.copy(externalSearchBusy=false,externalError=e.message?:"Ошибка поиска") }
+        }
+    }
+    fun resetSearch() { externalSearchJob?.cancel();externalRequest++;mutable.value=mutable.value.copy(search="",foods=mutable.value.allFoods,externalResults=emptyList(),externalSearchBusy=false,externalError=null) }
+    fun clearExternalSelection() { externalDetailRequest++;mutable.value = mutable.value.copy(externalSelected=null,externalDetailBusy=false,externalError=null) }
+    fun expireExternal() {
+        val now=nowEpochSeconds()
+        mutable.value=mutable.value.copy(
+            externalResults=mutable.value.externalResults.filter{fatSecretContentFresh(it.fetchedAtSeconds,now)},
+            externalSelected=mutable.value.externalSelected?.takeIf{fatSecretContentFresh(it.fetchedAtSeconds,now)},
+            externalDetails=mutable.value.externalDetails.filterValues{fatSecretContentFresh(it.fetchedAtSeconds,now)},
+        )
+    }
+    fun openExternal(id: String) = loadExternal { client, token -> client.food(token,id) }
+    fun lookupBarcode(code: String) = loadExternal { client, token -> client.barcode(token,code) }
+    fun selectExternal(food: ExternalFood) {
+        if (fatSecretContentFresh(food.fetchedAtSeconds,nowEpochSeconds()))
+            mutable.value=mutable.value.copy(externalSelected=food,externalDetailBusy=false,externalError=null)
+        else mutable.value=mutable.value.copy(externalSelected=null,externalError="Данные продукта устарели. Повторите запрос")
+    }
+    fun refreshExternalHistory(id: String) {
+        mutable.value=mutable.value.copy(externalHistoryBusy=true,externalHistoryError=null)
+        viewModelScope.launch {
+            try {
+                val food=withContext(io){requireNotNull(externalClient){"Поиск FatSecret недоступен"}.food(requireToken(),id)}
+                require(fatSecretContentFresh(food.fetchedAtSeconds,nowEpochSeconds())){"Данные продукта устарели"}
+                mutable.value=mutable.value.copy(externalDetails=mutable.value.externalDetails+(id to food),externalDetailFailedIds=mutable.value.externalDetailFailedIds-id,externalHistoryBusy=false)
+            } catch(e:CancellationException){throw e}
+            catch(e:Throwable){mutable.value=mutable.value.copy(externalHistoryBusy=false,externalHistoryError=e.message?:"Не удалось загрузить подробности")}
+        }
+    }
+    private fun loadExternal(loader: suspend (FatSecretClient,String)->ExternalFood) {
+        val request=++externalDetailRequest
+        mutable.value=mutable.value.copy(externalSelected=null,externalDetailBusy=true,externalError=null)
+        viewModelScope.launch {
+            try { val food=withContext(io){loader(requireNotNull(externalClient){"Поиск FatSecret недоступен"},requireToken())}; require(fatSecretContentFresh(food.fetchedAtSeconds,nowEpochSeconds())){"Данные продукта устарели. Повторите запрос"};if(request==externalDetailRequest)mutable.value=mutable.value.copy(externalSelected=food,externalDetailBusy=false) }
+            catch(e:CancellationException){throw e}
+            catch(e:Throwable){if(request==externalDetailRequest)mutable.value=mutable.value.copy(externalDetailBusy=false,externalError=e.message?:"Не удалось загрузить продукт")}
+        }
+    }
+    private fun requireToken(): String = tokenProvider()?.takeIf { it.isNotBlank() } ?: error("Подключите FFF в разделе Harness для поиска продуктов")
+    private fun launchDetailsRefresh() {
+        externalDetailsJob?.cancel()
+        val client=externalClient?:return
+        val entries=mutable.value.externalEntries
+        val date=mutable.value.date
+        if(entries.isEmpty())return
+        externalDetailsJob=viewModelScope.launch {
+            val token=withContext(io){tokenProvider()?.takeIf{it.isNotBlank()}}?:return@launch
+            // One in-flight request at a time limits API load; cancellation on date changes
+            // prevents an old day's results from leaking into the new screen.
+            entries.map{it.foodId}.distinct().forEachIndexed { index,id ->
+                if(index>0) delay(250)
+                val food=try { withContext(io){client.food(token,id)}.takeIf{fatSecretContentFresh(it.fetchedAtSeconds,nowEpochSeconds())} } catch(e:CancellationException){throw e}catch (_: Exception) { null }
+                if (food!=null && date==mutable.value.date) mutable.value=mutable.value.copy(externalDetails=mutable.value.externalDetails+(id to food))
+                else if (date==mutable.value.date) mutable.value=mutable.value.copy(externalDetailFailedIds=mutable.value.externalDetailFailedIds+id)
+            }
+        }
+    }
+    fun addExternal(food: ExternalFood, serving: ExternalServing, meal: MealType, amount: String, done: ()->Unit, invalid: (String)->Unit) {
+        if (!fatSecretContentFresh(food.fetchedAtSeconds,nowEpochSeconds())) { invalid("Данные FatSecret устарели. Загрузите продукт ещё раз"); return }
+        val parsed=parseGrams(amount);if(!parsed.valid){invalid(parsed.error!!);return}
+        val unit=serving.measureUnit?:run{invalid("Порция без массы или объёма не поддерживается");return}
+        mutate({
+            require(fatSecretContentFresh(food.fetchedAtSeconds,nowEpochSeconds())) { "Данные FatSecret устарели. Загрузите продукт ещё раз" }
+            val nutrition=externalPortionNutrition(serving,parsed.mg!!)
+            store.addExternalEntry(food.id,serving.id,mutable.value.date,meal,parsed.mg,nutrition,unit)
+            reloadNow()
+        },done)
+    }
+    fun correctExternalDay(date: LocalDate, entryId: Long?, nutrition: NutritionTotals, done: ()->Unit) = mutate({
+        store.correctExternalDay(date,entryId,nutrition)
+        reloadNow()
+    },done)
     fun preview(food: FoodEntity, amount: String): Result<NutritionTotals> {
         val parsed = parseGrams(amount)
         return if (!parsed.valid) Result.failure(IllegalArgumentException(parsed.error)) else runCatching { store.calculate(food, parsed.mg!!) }
@@ -156,8 +283,8 @@ internal class CalorieViewModel(
     }
     fun deleteEntry(id: Long, done: () -> Unit) = mutate({ store.deleteEntry(id); reloadNow() }, done)
     fun saveProfile(values: FoodFormValues, done: () -> Unit) = mutate({ store.updateProfile(values.calories, values.proteinMg, values.fatMg, values.carbMg); reloadNow() }, done)
-    private suspend fun reloadNow() { val entries=store.entries(mutable.value.date);val projection=checkedCalorieProjection(entries);val allFoods=store.foods();mutable.value=mutable.value.copy(profile=store.profile(),entries=entries,totals=projection.totals,mealTotals=projection.mealTotals,allFoods=allFoods,foods=if(mutable.value.search.isBlank())allFoods else store.foods(mutable.value.search),recents=store.recentFoods()) }
+    private suspend fun reloadNow() { val entries=store.entries(mutable.value.date);val projection=checkedCalorieProjection(entries);val allFoods=store.foods();mutable.value=mutable.value.copy(profile=store.profile(),entries=entries,totals=projection.totals,mealTotals=projection.mealTotals,allFoods=allFoods,foods=if(mutable.value.search.isBlank())allFoods else store.foods(mutable.value.search),recents=store.recentFoods(),externalEntries=store.externalEntries(mutable.value.date),externalDayTotal=store.externalDayTotal(mutable.value.date));launchDetailsRefresh() }
     private fun launchLoad(block: suspend () -> Unit) { mutable.value = mutable.value.copy(busy=true,error=null); viewModelScope.launch { try { withContext(io) { block() } } catch (e: CancellationException) { throw e } catch (e: Throwable) { mutable.value=mutable.value.copy(error=e.message?:"Ошибка") } finally { mutable.value=mutable.value.copy(busy=false) } } }
     private fun mutate(block: suspend () -> Unit, done: () -> Unit) { if(mutable.value.busy)return; mutable.value=mutable.value.copy(busy=true,error=null); viewModelScope.launch { var ok=false; try { withContext(io){block()};ok=true } catch(e:CancellationException){throw e}catch(e:Throwable){mutable.value=mutable.value.copy(error=e.message?:"Ошибка")}finally{mutable.value=mutable.value.copy(busy=false)};if(ok)done() } }
-    companion object { fun factory(store: CalorieStore, clock: Clock = Clock.systemDefaultZone()) = object:ViewModelProvider.Factory { @Suppress("UNCHECKED_CAST") override fun<T:ViewModel> create(modelClass:Class<T>):T=CalorieViewModel(store,clock) as T } }
+    companion object { fun factory(store: CalorieStore, clock: Clock = Clock.systemDefaultZone(), externalClient: FatSecretClient? = null, tokenProvider: ()->String? = {null}) = object:ViewModelProvider.Factory { @Suppress("UNCHECKED_CAST") override fun<T:ViewModel> create(modelClass:Class<T>):T=CalorieViewModel(store,clock,externalClient=externalClient,tokenProvider=tokenProvider) as T } }
 }

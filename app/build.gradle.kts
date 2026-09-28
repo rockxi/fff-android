@@ -24,8 +24,8 @@ android {
         applicationId = "ru.rockxi.fff"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.13.1"
+        versionCode = 23
+        versionName = "0.14.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -80,6 +80,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     ksp("androidx.room:room-compiler:2.6.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

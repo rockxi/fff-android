@@ -39,6 +39,20 @@ internal interface CalorieDao {
     @Update suspend fun updateEntry(value: DiaryEntryEntity): Int
     @Query("DELETE FROM calorie_diary_entries WHERE id = :id") suspend fun deleteEntry(id: Long): Int
 
+    @Insert suspend fun insertExternalEntry(value: ExternalDiaryEntryEntity): Long
+    @Query("SELECT * FROM calorie_external_entries WHERE localDate = :date ORDER BY mealType, createdAt, id")
+    suspend fun externalEntries(date: String): List<ExternalDiaryEntryEntity>
+    @Query("SELECT * FROM calorie_external_entries WHERE id = :id")
+    suspend fun externalEntry(id: Long): ExternalDiaryEntryEntity?
+    @Update suspend fun updateExternalEntry(value: ExternalDiaryEntryEntity): Int
+    @Query("DELETE FROM calorie_external_entries WHERE id = :id")
+    suspend fun deleteExternalEntry(id: Long): Int
+
+    @Query("SELECT * FROM calorie_external_day_totals WHERE localDate = :date")
+    suspend fun externalDayTotal(date: String): ExternalDayTotalEntity?
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun upsertExternalDayTotal(value: ExternalDayTotalEntity)
+
     @Query("""SELECT f.id, f.name, f.caloriesPer100gKcal, f.proteinPer100gMg, f.fatPer100gMg,
         f.carbPer100gMg, f.createdAt, f.updatedAt,
         (SELECT e2.amountGramsMg FROM calorie_diary_entries e2 WHERE e2.foodId=f.id

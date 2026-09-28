@@ -59,6 +59,8 @@ fun FffApp() {
                 val model: CalorieViewModel = viewModel(
                     factory = CalorieViewModel.factory(
                         RepositoryCalorieStore(CalorieRepository(CalorieDatabase.get(context))),
+                        externalClient = ru.rockxi.fff.data.calories.HttpFatSecretClient(),
+                        tokenProvider = { ru.rockxi.fff.data.harness.KeystoreHarnessTokenStore(context).load() },
                     ),
                 )
                 CalorieScreen(viewModel = model, onBack = navController::popBackStack)

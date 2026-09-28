@@ -279,3 +279,47 @@ Implementation tasks derived from it must add repository/ViewModel unit tests,
 Room schema/export and migration coverage where applicable, Compose semantics
 coverage for critical interactions, and pass the repository's complete Gradle
 gate before release.
+
+## FatSecret search and scanner extension (2026-09-28)
+
+This section extends the original local-only MVP above; its earlier exclusion of
+barcode search describes that original release, not the current feature branch.
+
+- The add-food picker now searches both personal foods and FatSecret. Remote
+  search is debounced, reports empty/loading/error states, and requires an FFF
+  owner connection. Selecting a remote result fetches its servings, then asks
+  for a positive amount in the serving's supported mass/volume unit.
+- Google's on-device Code Scanner reads EAN-8, UPC-A and EAN-13 without an app
+  camera permission. The code is normalized to GTIN-13. Cancellation leaves the
+  diary unchanged; failures offer retry or manual personal-food creation.
+- FFF server holds the FatSecret OAuth 2 credentials. The Android app holds no
+  provider secret. The Asus account currently has `basic` only: search and food
+  details work, but barcode lookup requires FatSecret to grant `barcode` scope.
+  Until then, the scanned code is shown and local manual creation remains
+  available; do not label barcode lookup as live.
+- Room schema 2 retains FatSecret food/serving IDs and user-entered date, meal
+  and quantity. Product name, brand and nutrition are fetched only in memory and
+  discarded within 24 hours. The user-owned daily calories/macros aggregate is
+  permanent and available offline, while individual FatSecret diary details
+  require a fresh network fetch. Remote entries cannot be automatically
+  recalculated because changed provider nutrition might corrupt the recorded
+  historical aggregate. Their detail view instead permits a user-entered
+  correction of that day's external aggregate, optionally deleting the selected
+  ID-only diary row in the same transaction. The UI states clearly that the
+  corrected calories and macros must reflect the desired full external day total.
+- `Powered by fatsecret Platform API` links to the provider on the launcher and
+  Calories views. The license treatment of permanent *derived* daily totals is
+  not expressly resolved in the standard public terms; confirm it with
+  FatSecret before general availability.
+
+### Native UI audit
+
+The source audit applied Impeccable's native-Android hierarchy, motion and
+accessibility checks. The day summary remains the dominant element; search,
+scan, custom modals and attribution follow the FFF dark/mint language. Primary
+interactive rows and actions are at least 48 dp, remote loading/error states
+are textual, and macro progress has spoken labels. The original dense 10–12 sp
+secondary captions remain a readability compromise to inspect on a physical
+small phone at large font settings. There is no Android emulator connected in
+this workspace, so camera, keyboard and TalkBack behavior must be checked on a
+device before treating the UI as fully verified.

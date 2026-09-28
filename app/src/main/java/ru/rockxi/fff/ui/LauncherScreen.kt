@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -63,6 +64,7 @@ import ru.rockxi.fff.update.UpdateRequests
 
 @Composable
 fun LauncherScreen(onOpen: (Destination) -> Unit) {
+    val uriHandler = LocalUriHandler.current
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
             .verticalScroll(rememberScrollState()).padding(horizontal = FffMetrics.pageGutter),
@@ -104,6 +106,14 @@ fun LauncherScreen(onOpen: (Destination) -> Unit) {
             Icon(Icons.Rounded.SystemUpdate, contentDescription = null)
             Text("Проверить обновления", modifier = Modifier.padding(start = 8.dp))
         }
+        Text(
+            "Powered by fatsecret Platform API",
+            color = FffMuted,
+            fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .clickable { uriHandler.openUri("https://platform.fatsecret.com") }
+                .padding(vertical = 14.dp),
+        )
         Text("●  LOCAL FIRST  ·  PRIVATE BY DESIGN", color = FffMint.copy(alpha = .7f), fontSize = 10.sp,
             fontFamily = FontFamily.Monospace, letterSpacing = 1.sp, modifier = Modifier.padding(vertical = 12.dp))
         Spacer(Modifier.height(24.dp))

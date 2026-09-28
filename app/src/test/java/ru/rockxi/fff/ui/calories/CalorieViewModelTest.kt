@@ -92,6 +92,106 @@ class CalorieViewModelTest {
     }
 
     @Test fun `numeric focus helper selects the complete useful default`() { assertEquals(androidx.compose.ui.text.TextRange(0,3),selectAllRange("100"));assertEquals(androidx.compose.ui.text.TextRange.Zero,selectAllRange("")) }
+
+    @Test fun `offline external day aggregate contributes to summary but not false meal subtotal`()=runTest(dispatcher){
+        val store=FakeCalorieStore().apply { externalTotal=NutritionTotals(450,12_000,10_000,38_000) }
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher)
+        advanceUntilIdle()
+        assertEquals(666,vm.state.value.overallTotals().caloriesKcal)
+        assertEquals(216,vm.state.value.mealTotal(MealType.BREAKFAST))
+        assertEquals(450,vm.state.value.externalDayTotal.caloriesKcal)
+    }
+
+    @Test fun `external search debounces and keeps latest query only`()=runTest(dispatcher){
+        val client=FakeFatSecretClient()
+        val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{"owner-token"})
+        advanceUntilIdle()
+        vm.search("яб");vm.search("яблоко");advanceUntilIdle()
+        assertEquals(listOf("яблоко"),client.queries)
+        assertEquals("яблоко",vm.state.value.externalResults.single().name)
+        vm.resetSearch();advanceUntilIdle()
+        assertTrue(vm.state.value.externalResults.isEmpty())
+    }
+
+    @Test fun `external entry stores only IDs and user portion while totals stay local`()=runTest(dispatcher){
+        val store=FakeCalorieStore()
+        val food=ExternalFood("321","Яблоко",null,listOf(ExternalServing("s1","100 g",100.0,52.0,0.3,0.2,14.0)),System.currentTimeMillis()/1000)
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher)
+        advanceUntilIdle()
+        var completed=false
+        vm.addExternal(food,food.servings.single(),MealType.LUNCH,"150",{completed=true}){fail(it)}
+        advanceUntilIdle()
+        assertTrue(completed)
+        assertEquals("321",store.external.single().foodId)
+        assertEquals("s1",store.external.single().servingId)
+        assertEquals(150_000,store.external.single().amountGramsMg)
+        assertEquals(294,vm.state.value.overallTotals().caloriesKcal)
+    }
+
+    @Test fun `online search explains missing pairing without invoking provider`()=runTest(dispatcher){
+        val client=FakeFatSecretClient()
+        val vm=CalorieViewModel(FakeCalorieStore(),Clock.systemUTC(),dispatcher,client,{null})
+        advanceUntilIdle();vm.search("молоко");advanceUntilIdle()
+        assertTrue(vm.state.value.externalError.orEmpty().contains("Harness"))
+        assertTrue(client.queries.isEmpty())
+    }
+
+    @Test fun `ml portion is recorded with volume unit without density guess`()=runTest(dispatcher){
+        val store=FakeCalorieStore()
+        val serving=ExternalServing("ml1","стакан",null,90.0,3.0,2.0,12.0,200.0,"ml")
+        val food=ExternalFood("654","Напиток",null,listOf(serving),System.currentTimeMillis()/1000)
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher)
+        advanceUntilIdle()
+        vm.addExternal(food,serving,MealType.LUNCH,"200",{},::fail)
+        advanceUntilIdle()
+        assertEquals("ml",store.external.single().amountUnit)
+        assertEquals(306,vm.state.value.overallTotals().caloriesKcal)
+    }
+
+    @Test fun `external content expiring while save is queued cannot mutate durable totals`()=runTest(dispatcher){
+        val store=FakeCalorieStore()
+        var now=100_000L
+        val serving=ExternalServing("s1","100 g",100.0,52.0,0.3,0.2,14.0)
+        val food=ExternalFood("321","Яблоко",null,listOf(serving),13_601L)
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher,nowEpochSeconds={now})
+        advanceUntilIdle()
+        vm.addExternal(food,serving,MealType.LUNCH,"100",{},::fail)
+        now=100_001L
+        advanceUntilIdle()
+        assertTrue(store.external.isEmpty())
+        assertEquals(0,store.externalTotal.caloriesKcal)
+        assertTrue(vm.state.value.error.orEmpty().contains("устарели"))
+    }
+
+    @Test fun `history refresh does not silently stop after thirty distinct food IDs`()=runTest(dispatcher){
+        val store=FakeCalorieStore()
+        val client=FakeFatSecretClient().apply{canLoadDetails=true}
+        repeat(32){index->store.external+=ExternalDiaryEntryEntity(index+1L,"2026-09-12",MealType.LUNCH,(index+1).toString(),"s1",100_000,"g",index.toLong(),index.toLong())}
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher,client,{"owner-token"})
+        advanceUntilIdle()
+        assertEquals(32,client.requestedIds.size)
+        assertEquals(32,vm.state.value.externalDetails.size)
+        assertTrue(vm.state.value.externalDetailFailedIds.isEmpty())
+    }
+
+    @Test fun `manual external day correction permits all zeros and optional entry removal`()=runTest(dispatcher){
+        val date=LocalDate.parse("2026-09-12")
+        assertEquals(NutritionTotals(),parseExternalDayCorrection("0","0","0","0").getOrThrow())
+        assertEquals(NutritionTotals(),parseExternalDayCorrection("","","","").getOrThrow())
+        assertTrue(parseExternalDayCorrection("-1","0","0","0").isFailure)
+        val store=FakeCalorieStore().apply{
+            externalTotal=NutritionTotals(250,10_000,5_000,35_000)
+            external+=ExternalDiaryEntryEntity(7,date.toString(),MealType.LUNCH,"321","s1",100_000,"g",7,7)
+        }
+        val vm=CalorieViewModel(store,Clock.fixed(Instant.parse("2026-09-12T10:00:00Z"),ZoneOffset.UTC),dispatcher)
+        advanceUntilIdle()
+        var done=false
+        vm.correctExternalDay(date,7,NutritionTotals()){done=true}
+        advanceUntilIdle()
+        assertTrue(done)
+        assertTrue(vm.state.value.externalEntries.isEmpty())
+        assertEquals(216,vm.state.value.overallTotals().caloriesKcal)
+    }
     private fun entry(id:Long,kcal:Int,p:Long,f:Long,c:Long,meal:MealType)=DiaryEntryEntity(id,"2026-09-12",meal,null,"Запись",null,kcal,p,f,c,id,id)
 }
 
@@ -99,6 +199,8 @@ private class FakeCalorieStore:CalorieStore {
     val food=FoodEntity(1,"Творог",120,18_000,5_000,3_000,1,1)
     private val all=mutableListOf(DiaryEntryEntity(1,"2026-09-12",MealType.BREAKFAST,1,"Творог",180_000,216,32_400,9_000,5_400,1,1))
     var addCalls=0;var overflow=false;private var next=2L
+    var externalTotal=NutritionTotals()
+    val external=mutableListOf<ExternalDiaryEntryEntity>()
     private var profile=CalorieProfileEntity(1,2000,120_000,70_000,230_000,1)
     override suspend fun profile()=profile
     override suspend fun updateProfile(calories:Int,proteinMg:Long,fatMg:Long,carbMg:Long){profile=profile.copy(dailyCaloriesKcal=calories,proteinTargetMg=proteinMg,fatTargetMg=fatMg,carbTargetMg=carbMg)}
@@ -114,4 +216,32 @@ private class FakeCalorieStore:CalorieStore {
     override suspend fun updateFoodEntry(id:Long,foodId:Long,date:LocalDate,meal:MealType,amountMg:Long)=Unit
     override suspend fun updateQuickEntry(id:Long,name:String,date:LocalDate,meal:MealType,calories:Int,proteinMg:Long,fatMg:Long,carbMg:Long)=Unit
     override suspend fun deleteEntry(id:Long){all.removeAll{it.id==id}}
+    override suspend fun externalEntries(date:LocalDate)=external.filter{it.localDate==date.toString()}
+    override suspend fun externalDayTotal(date:LocalDate)=externalTotal
+    override suspend fun addExternalEntry(foodId:String,servingId:String,date:LocalDate,meal:MealType,amountMg:Long,nutrition:NutritionTotals,amountUnit:String):Long{
+        val id=next++
+        external+=ExternalDiaryEntryEntity(id,date.toString(),meal,foodId,servingId,amountMg,amountUnit,id,id)
+        externalTotal=addNutrition(externalTotal,nutrition)
+        return id
+    }
+    override suspend fun correctExternalDay(date:LocalDate,entryId:Long?,nutrition:NutritionTotals){
+        if(entryId!=null) external.removeAll{it.id==entryId && it.localDate==date.toString()}
+        externalTotal=nutrition
+    }
+}
+
+private class FakeFatSecretClient:FatSecretClient {
+    val queries=mutableListOf<String>()
+    val requestedIds=mutableListOf<String>()
+    var canLoadDetails=false
+    override suspend fun search(token:String,query:String):List<ExternalFoodSummary>{
+        queries+=query
+        return listOf(ExternalFoodSummary("321",query,null,System.currentTimeMillis()/1000))
+    }
+    override suspend fun food(token:String,id:String):ExternalFood{
+        requestedIds+=id
+        if(!canLoadDetails)error("unused")
+        return ExternalFood(id,"Продукт $id",null,listOf(ExternalServing("s1","100 g",100.0,10.0,1.0,1.0,1.0)),System.currentTimeMillis()/1000)
+    }
+    override suspend fun barcode(token:String,gtin13:String):ExternalFood=error("unused")
 }

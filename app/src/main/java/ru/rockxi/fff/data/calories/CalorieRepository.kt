@@ -44,6 +44,50 @@ internal class CalorieRepository(
     suspend fun entries(date: LocalDate): List<DiaryEntryEntity> = dao.entries(date.toString())
     suspend fun entry(id: Long): DiaryEntryEntity? = dao.entry(id)
 
+    suspend fun externalEntries(date: LocalDate): List<ExternalDiaryEntryEntity> = dao.externalEntries(date.toString())
+
+    suspend fun externalDayTotal(date: LocalDate): NutritionTotals = dao.externalDayTotal(date.toString())?.let {
+        NutritionTotals(it.caloriesKcal, it.proteinMg, it.fatMg, it.carbMg)
+    } ?: NutritionTotals()
+
+    /** Stores identifiers and user-entered portion only; API names and per-food values remain transient. */
+    suspend fun addExternalEntry(foodId: String, servingId: String, date: LocalDate,
+                                 mealType: MealType, amountGramsMg: Long, nutrition: NutritionTotals,
+                                 amountUnit: String = "g"): Long = database.withTransaction {
+        validateExternal(foodId, servingId, amountGramsMg, nutrition)
+        require(amountUnit == "g" || amountUnit == "ml") { "Некорректная единица порции" }
+        val timestamp = now()
+        val current = externalDayTotal(date)
+        val next = add(current, nutrition)
+        validateTotals(next)
+        val id = dao.insertExternalEntry(ExternalDiaryEntryEntity(
+            localDate = date.toString(), mealType = mealType, foodId = foodId,
+            servingId = servingId, amountGramsMg = amountGramsMg,
+            amountUnit = amountUnit,
+            createdAt = timestamp, updatedAt = timestamp,
+        ))
+        dao.upsertExternalDayTotal(ExternalDayTotalEntity(
+            date.toString(), next.caloriesKcal, next.proteinMg, next.fatMg, next.carbMg, timestamp,
+        ))
+        id
+    }
+
+    /** User-entered correction of the durable day total, optionally removing a mistaken ID-only row.
+     * No provider-supplied per-food nutrition is fetched or persisted by this operation.
+     */
+    suspend fun correctExternalDay(date: LocalDate, entryId: Long?, nutrition: NutritionTotals) = database.withTransaction {
+        validateTotals(nutrition)
+        if (entryId != null) {
+            val entry = requireNotNull(dao.externalEntry(entryId)) { "Запись FatSecret не найдена" }
+            require(entry.localDate == date.toString()) { "Запись относится к другому дню" }
+            require(dao.deleteExternalEntry(entryId) == 1) { "Не удалось удалить запись FatSecret" }
+        }
+        dao.upsertExternalDayTotal(ExternalDayTotalEntity(
+            date.toString(), nutrition.caloriesKcal, nutrition.proteinMg,
+            nutrition.fatMg, nutrition.carbMg, now(),
+        ))
+    }
+
     suspend fun addFoodEntry(foodId: Long, date: LocalDate, mealType: MealType, amountGramsMg: Long): Long = database.withTransaction {
         val food = requireNotNull(dao.food(foodId)) { "Продукт не найден" }
         val nutrition = calculate(food, amountGramsMg)
@@ -93,7 +137,7 @@ internal class CalorieRepository(
             byMeal[entry.mealType] = add(byMeal.getValue(entry.mealType), value)
             total = add(total, value)
         }
-        return DailyNutritionSummary(total, byMeal)
+        return DailyNutritionSummary(add(total, externalDayTotal(date)), byMeal)
     }
 
     internal fun calculate(food: FoodEntity, amountGramsMg: Long): NutritionTotals {
@@ -138,6 +182,19 @@ internal class CalorieRepository(
         require(calories in 1..MAX_CALORIES.toInt()) { "Калории должны быть положительными" }
         listOf(protein, fat, carbs).forEach { require(it in 0..MAX_MACRO_MG) { "Некорректное значение макронутриента" } }
         return normalized
+    }
+
+    private fun validateExternal(foodId: String, servingId: String, amountGramsMg: Long, nutrition: NutritionTotals) {
+        require(foodId.matches(Regex("[1-9][0-9]{0,17}"))) { "Некорректный ID продукта" }
+        require(servingId.matches(Regex("[1-9][0-9]{0,17}"))) { "Некорректный ID порции" }
+        require(amountGramsMg in 1..MAX_AMOUNT_MG) { "Некорректная масса порции" }
+        validateTotals(nutrition)
+        require(nutrition.caloriesKcal > 0 || nutrition.proteinMg > 0 || nutrition.fatMg > 0 || nutrition.carbMg > 0) { "Нет пищевой ценности" }
+    }
+
+    private fun validateTotals(value: NutritionTotals) {
+        require(value.caloriesKcal in 0..MAX_CALORIES && value.proteinMg in 0..MAX_MACRO_MG &&
+            value.fatMg in 0..MAX_MACRO_MG && value.carbMg in 0..MAX_MACRO_MG) { "Некорректная пищевая ценность" }
     }
 
     private fun requiredName(value: String): String = value.trim().also { require(it.isNotEmpty() && it.length <= 120) { "Название должно содержать от 1 до 120 символов" } }

@@ -220,8 +220,36 @@ and editing daily targets through FFF custom modals. A referenced catalog food
 cannot be deleted until its diary entries are removed, and editing a food never
 rewrites historical snapshots.
 
-Calorie Tracker has no Telegram, Harness, remote-food-service or network
-dependency. Its data is not included in the versioned Finance JSON backup, and
+Calorie Tracker does not depend on Telegram. Local foods and manual diary entries
+remain fully offline. The optional FatSecret product search and GTIN barcode
+lookup use the same independent owner bearer as Harness, but no Telegram session.
+The Android app calls only the owner-authenticated FFF HTTPS proxy. OAuth 2
+Client ID/Secret are server environment variables and never enter the APK.
+Barcode scanning uses Google Code Scanner (EAN-8, UPC-A and EAN-13), with a
+manual product-creation fallback. The current FatSecret account grants only
+`basic`: food search and detail use the v1 endpoints successfully, while the
+remote barcode lookup reports a missing `barcode` scope until that access is
+enabled by FatSecret. Scanning and manual creation still work without it.
+
+Schema version 2 adds `calorie_external_entries` and
+`calorie_external_day_totals` through a lossless Room 1→2 migration. External
+entries persist FatSecret `food_id`/`serving_id` plus the user's date, meal,
+quantity and unit (`g` or `ml`); they never persist names, brands, labels or
+per-product nutrient values. The user's aggregate consumed calories and macros
+for each day persist in the second table, so the daily summary stays available
+offline. Product-level details are fetched again as needed; transient responses
+are purged after 24 hours and cannot be shown offline once unavailable. The
+UI links `Powered by fatsecret Platform API` wherever FatSecret data appears,
+including before login on the launcher. Because original per-entry nutrition is
+not stored and FatSecret values may change, external entries are not
+automatically recalculated. Their detail view instead offers a custom manual
+correction of the external daily aggregate and optional deletion of the selected
+ID-only entry in one atomic transaction. This allows an incorrect portion to be
+fixed without persisting provider nutrient snapshots. Confirm the FatSecret
+treatment of permanent *derived daily user
+aggregates* before a broad public release.
+
+Calorie data is not included in the versioned Finance JSON backup, and
 Android platform backup remains disabled by the manifest. There is currently no
 dedicated Calorie export/restore flow: preservation relies on retaining private
 application data during an in-place update. Uninstalling or clearing app data can

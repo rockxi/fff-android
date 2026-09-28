@@ -122,6 +122,53 @@ class CalorieRepositoryTest {
         assertEquals(0L, summary.byMeal.getValue(MealType.DINNER).caloriesKcal)
     }
 
+    @Test fun externalEntryPersistsOnlyIdsAndDurableDailyAggregate() = runBlocking {
+        val date = LocalDate.of(2026, 9, 12)
+        val nutrition = NutritionTotals(175, 12_000, 5_000, 18_000)
+        val id = repository.addExternalEntry("12345", "67890", date, MealType.LUNCH, 125_000, nutrition)
+        val stored = repository.externalEntries(date).single()
+        assertEquals(id, stored.id)
+        assertEquals("12345", stored.foodId)
+        assertEquals("67890", stored.servingId)
+        assertEquals(125_000L, stored.amountGramsMg)
+        assertEquals(nutrition, repository.externalDayTotal(date))
+        assertTrue(repository.foods().isEmpty())
+        assertTrue(repository.entries(date).isEmpty())
+    }
+
+    @Test fun invalidExternalEntryCannotChangeDailyAggregate() = runBlocking {
+        val date = LocalDate.of(2026, 9, 12)
+        assertFails { repository.addExternalEntry("abc", "2", date, MealType.LUNCH, 100_000, NutritionTotals(100)) }
+        assertFails { repository.addExternalEntry("1", "2", date, MealType.LUNCH, 0, NutritionTotals(100)) }
+        assertTrue(repository.externalEntries(date).isEmpty())
+        assertEquals(NutritionTotals(), repository.externalDayTotal(date))
+    }
+
+    @Test fun manualExternalDayCorrectionCanRemoveMistakeWithoutPersistingFoodNutrition() = runBlocking {
+        val date = LocalDate.of(2026, 9, 12)
+        val mistaken = repository.addExternalEntry("123", "456", date, MealType.LUNCH, 1_000_000,
+            NutritionTotals(1_000, 50_000, 30_000, 100_000))
+        val valid = repository.addExternalEntry("789", "987", date, MealType.DINNER, 100_000,
+            NutritionTotals(100, 5_000, 3_000, 10_000))
+
+        val corrected = NutritionTotals(100, 5_000, 3_000, 10_000)
+        repository.correctExternalDay(date, mistaken, corrected)
+
+        assertEquals(listOf(valid), repository.externalEntries(date).map { it.id })
+        assertEquals(corrected, repository.externalDayTotal(date))
+        assertEquals(corrected, repository.dailySummary(date).total)
+    }
+
+    @Test fun externalCorrectionRejectsWrongDateAndInvalidTotalsAtomically() = runBlocking {
+        val date = LocalDate.of(2026, 9, 12)
+        val id = repository.addExternalEntry("123", "456", date, MealType.LUNCH, 100_000,
+            NutritionTotals(200, 1_000, 1_000, 1_000))
+        assertFails { repository.correctExternalDay(date.minusDays(1), id, NutritionTotals()) }
+        assertFails { repository.correctExternalDay(date, id, NutritionTotals(-1)) }
+        assertEquals(listOf(id), repository.externalEntries(date).map { it.id })
+        assertEquals(200L, repository.externalDayTotal(date).caloriesKcal)
+    }
+
     @Test fun recentsAreLatestFirstAndSupplyLatestAmount() = runBlocking {
         val date = LocalDate.of(2026, 9, 12)
         val first = repository.createFood("Первый", 100, 1_000, 1_000, 1_000)

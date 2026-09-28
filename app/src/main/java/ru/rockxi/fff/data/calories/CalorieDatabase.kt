@@ -5,11 +5,13 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [CalorieProfileEntity::class, FoodEntity::class, DiaryEntryEntity::class],
-    version = 1,
+    entities = [CalorieProfileEntity::class, FoodEntity::class, DiaryEntryEntity::class,
+        ExternalDiaryEntryEntity::class, ExternalDayTotalEntity::class],
+    version = 2,
     exportSchema = true,
 )
 @TypeConverters(CalorieConverters::class)
@@ -18,6 +20,30 @@ internal abstract class CalorieDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: CalorieDatabase? = null
+
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `calorie_external_entries` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `localDate` TEXT NOT NULL,
+                    `mealType` TEXT NOT NULL,
+                    `foodId` TEXT NOT NULL,
+                    `servingId` TEXT NOT NULL,
+                    `amountGramsMg` INTEGER NOT NULL,
+                    `amountUnit` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_calorie_external_entries_localDate` ON `calorie_external_entries` (`localDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_calorie_external_entries_foodId` ON `calorie_external_entries` (`foodId`)")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `calorie_external_day_totals` (
+                    `localDate` TEXT NOT NULL PRIMARY KEY,
+                    `caloriesKcal` INTEGER NOT NULL,
+                    `proteinMg` INTEGER NOT NULL,
+                    `fatMg` INTEGER NOT NULL,
+                    `carbMg` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL)""")
+            }
+        }
 
         private val callback = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
@@ -36,7 +62,7 @@ internal abstract class CalorieDatabase : RoomDatabase() {
                 context.applicationContext,
                 CalorieDatabase::class.java,
                 "fff-calorie.db",
-            ).addCallback(callback).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).addCallback(callback).build().also { instance = it }
         }
 
         fun inMemory(context: Context): CalorieDatabase =
